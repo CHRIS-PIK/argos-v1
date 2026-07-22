@@ -1,4 +1,4 @@
-# Piloto de ingestão Aruba New Central → MariaDB → Power BI
+# Piloto DataLake NS → Power BI
 
 Este piloto retira do Zabbix os payloads destinados a relatório e mantém o Zabbix apenas como monitor da saúde da esteira.
 
