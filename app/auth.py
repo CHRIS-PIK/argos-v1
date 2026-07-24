@@ -10,6 +10,7 @@ from app.config import settings
 TOKEN_FILE = Path("/data/token.json")
 LOCK_FILE = Path("/data/token.lock")
 
+
 class TokenManager:
     def _load(self) -> dict:
         if not TOKEN_FILE.exists():
@@ -31,23 +32,14 @@ class TokenManager:
             token = self._load()
             if token.get("access_token") and token.get("expires_at", 0) > time.time() + 120:
                 return token["access_token"]
-            return self._renew(token)
+            return self._renew()
 
-    def _renew(self, current: dict) -> str:
-        refresh_token = current.get("refresh_token") or settings.aruba_refresh_token
-        if refresh_token:
-            payload = {
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-                "client_id": settings.aruba_client_id,
-                "client_secret": settings.aruba_client_secret,
-            }
-        else:
-            payload = {
-                "grant_type": "client_credentials",
-                "client_id": settings.aruba_client_id,
-                "client_secret": settings.aruba_client_secret,
-            }
+    def _renew(self) -> str:
+        payload = {
+            "grant_type": "client_credentials",
+            "client_id": settings.aruba_client_id,
+            "client_secret": settings.aruba_client_secret,
+        }
         response = requests.post(
             settings.aruba_auth_url,
             data=payload,
@@ -59,7 +51,6 @@ class TokenManager:
         expires_in = int(data.get("expires_in", 3600))
         saved = {
             "access_token": data["access_token"],
-            "refresh_token": data.get("refresh_token", refresh_token),
             "expires_at": time.time() + expires_in,
         }
         self._save(saved)
