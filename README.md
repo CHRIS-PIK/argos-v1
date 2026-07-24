@@ -1,4 +1,4 @@
-# Piloto DataLake NS → Power BI
+# Piloto DataLake NS (Argos) → Power BI
 
 Este piloto retira do Zabbix os payloads destinados a relatório e mantém o Zabbix apenas como monitor da saúde da esteira.
 
