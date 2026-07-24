@@ -7,7 +7,6 @@ import time
 from datetime import datetime, timezone
 
 from app.api import ArubaClient
-from app.db import connection
 from app.queue import enqueue_page
 
 
@@ -16,14 +15,14 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 
+# Licensing and AI Insights stay disabled until the customer explicitly requests
+# them and the corresponding New Central endpoints are validated for the tenant.
 STATIC_ENDPOINTS = {
     "aps": "network-monitoring/v1/aps",
     "clients": "network-monitoring/v1/clients",
     "switches": "network-monitoring/v1/switches",
     "radios": "network-monitoring/v1/radios",
     "alerts": "network-notifications/v1/alerts",
-    "licenses": "platform/licensing/v1/subscriptions",
-    "insights_global": "aiops/v2/insights/global/list",
 }
 
 
@@ -36,31 +35,8 @@ def bucket_10m(value: datetime | None = None) -> datetime:
     return value.replace(minute=(value.minute // 10) * 10, second=0, microsecond=0)
 
 
-def known_site_ids() -> list[str]:
-    sql = """
-    SELECT DISTINCT site_id
-      FROM (
-        SELECT site_id FROM ap_current WHERE site_id IS NOT NULL AND site_id <> ''
-        UNION
-        SELECT site_id FROM raw_entity_current
-         WHERE site_id IS NOT NULL AND site_id <> ''
-      ) s
-    """
-    try:
-        with connection() as cnx:
-            cur = cnx.cursor()
-            cur.execute(sql)
-            return [str(row[0]) for row in cur.fetchall()]
-    except Exception:
-        logging.exception("could not load known site ids")
-        return []
-
-
 def endpoint_plan() -> list[tuple[str, str]]:
-    plan = list(STATIC_ENDPOINTS.items())
-    for site_id in known_site_ids():
-        plan.append((f"insights_site:{site_id}", f"aiops/v2/insights/site/{site_id}/list"))
-    return plan
+    return list(STATIC_ENDPOINTS.items())
 
 
 def collect_endpoint(collector_name: str, endpoint: str) -> tuple[int, int]:
