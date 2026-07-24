@@ -12,7 +12,7 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --innodb-buffer-pool-size=2G
-      - --max-connections=100
+      - --max-connections=150
     ports:
       - "3306:3306"
     volumes:
@@ -24,9 +24,9 @@ services:
       timeout: 5s
       retries: 10
 
-  ingestor:
+  producer:
     build: .
-    container_name: aruba-ingestor
+    container_name: aruba-producer
     restart: unless-stopped
     env_file: .env
     depends_on:
@@ -34,7 +34,16 @@ services:
         condition: service_healthy
     volumes:
       - token_data:/data
-    command: ["python", "-m", "app.scheduler"]
+    command: ["python", "-m", "app.producer"]
+
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    command: ["python", "-m", "app.worker"]
 
 volumes:
   mariadb_data:
