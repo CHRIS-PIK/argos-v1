@@ -66,7 +66,11 @@ SET
     WHEN NULLIF(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.connectedAt')), 'null'), '') IS NULL
       THEN connected_at
     ELSE STR_TO_DATE(
-      REPLACE(SUBSTRING(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.connectedAt')), 1, 26), 'T', ' '),
+      REPLACE(
+        REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.connectedAt')), 'T', ' '),
+        'Z',
+        ''
+      ),
       '%Y-%m-%d %H:%i:%s.%f'
     )
   END,
