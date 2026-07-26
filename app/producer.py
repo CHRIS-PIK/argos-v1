@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import time
@@ -39,15 +41,53 @@ def endpoint_plan() -> list[tuple[str, str]]:
     return list(STATIC_ENDPOINTS.items())
 
 
+def payload_sha256(items: list) -> str:
+    canonical = json.dumps(
+        items,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def collect_endpoint(collector_name: str, endpoint: str) -> tuple[int, int]:
     client = ArubaClient()
     collected_at = utc_now()
     bucket_at = bucket_10m(collected_at)
+    max_pages = max(1, int(os.getenv("MAX_PAGES_PER_COLLECTOR", "100")))
+    seen_payloads: set[str] = set()
     pages = 0
     queued = 0
 
     for page_number, items in enumerate(client.pages(endpoint), start=1):
+        if page_number > max_pages:
+            logging.warning(
+                "producer pagination stopped collector=%s endpoint=%s "
+                "page=%s reason=max_pages limit=%s",
+                collector_name,
+                endpoint,
+                page_number,
+                max_pages,
+            )
+            break
+
+        page_hash = payload_sha256(items)
+        if page_hash in seen_payloads:
+            logging.warning(
+                "producer pagination stopped collector=%s endpoint=%s "
+                "page=%s reason=repeated_payload hash=%s",
+                collector_name,
+                endpoint,
+                page_number,
+                page_hash,
+            )
+            break
+
+        seen_payloads.add(page_hash)
         pages += 1
+
         if enqueue_page(
             collector_name=collector_name,
             endpoint=endpoint,
@@ -60,7 +100,10 @@ def collect_endpoint(collector_name: str, endpoint: str) -> tuple[int, int]:
 
     logging.info(
         "producer collector=%s endpoint=%s pages=%s queued=%s",
-        collector_name, endpoint, pages, queued,
+        collector_name,
+        endpoint,
+        pages,
+        queued,
     )
     return pages, queued
 
