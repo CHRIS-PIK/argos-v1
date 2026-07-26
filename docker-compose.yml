@@ -29,6 +29,15 @@ services:
     container_name: aruba-producer
     restart: unless-stopped
     env_file: .env
+    environment:
+      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-homelab}
+      HOST_NAME: ${HOST_NAME:-olympus}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4317}
+      PYROSCOPE_SERVER_ADDRESS: ${PYROSCOPE_SERVER_ADDRESS:-http://host.docker.internal:4040}
+      PYROSCOPE_SAMPLE_RATE: ${PYROSCOPE_SAMPLE_RATE:-100}
+      PYROSCOPE_MEMORY_ENABLED: ${PYROSCOPE_MEMORY_ENABLED:-true}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mariadb:
         condition: service_healthy
@@ -43,6 +52,15 @@ services:
     container_name: aruba-worker
     restart: unless-stopped
     env_file: .env
+    environment:
+      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-homelab}
+      HOST_NAME: ${HOST_NAME:-olympus}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4317}
+      PYROSCOPE_SERVER_ADDRESS: ${PYROSCOPE_SERVER_ADDRESS:-http://host.docker.internal:4040}
+      PYROSCOPE_SAMPLE_RATE: ${PYROSCOPE_SAMPLE_RATE:-100}
+      PYROSCOPE_MEMORY_ENABLED: ${PYROSCOPE_MEMORY_ENABLED:-true}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mariadb:
         condition: service_healthy
