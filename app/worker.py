@@ -5,6 +5,8 @@ import logging
 import os
 import time
 
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from prometheus_client import start_http_server
 
 from app.observability.metrics import (
@@ -14,6 +16,7 @@ from app.observability.metrics import (
     WORKER_RECORDS_WRITTEN,
     WORKER_STALE_RECOVERED,
 )
+from app.observability.runtime import configure_observability
 from app.processors import process_message
 from app.queue import (
     claim_message,
@@ -28,6 +31,9 @@ logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(message)s",
 )
+
+configure_observability("worker")
+tracer = trace.get_tracer("argos.worker")
 
 
 def parse_payload(value) -> list[dict]:
@@ -73,36 +79,54 @@ def main() -> None:
 
         collector = message["collector_name"]
         started = time.monotonic()
-        try:
-            items = parse_payload(message["payload"])
-            written = process_message(
-                collector_name=collector,
-                items=items,
-                collected_at=message["collected_at"],
-                bucket_at=message["bucket_at"],
-            )
-            mark_processed(message["id"])
-            WORKER_MESSAGES.labels(collector=collector, status="processed").inc()
-            WORKER_ITEMS_PROCESSED.labels(collector=collector).inc(len(items))
-            WORKER_RECORDS_WRITTEN.labels(collector=collector).inc(written)
-            logging.info(
-                "processed queue_id=%s collector=%s items=%s written=%s attempts=%s",
-                message["id"], collector, len(items), written, message["attempts"],
-            )
-        except Exception as exc:
-            logging.exception(
-                "worker failed queue_id=%s collector=%s",
-                message["id"], collector,
-            )
-            final_status = mark_failed(message["id"], message["attempts"], repr(exc))
-            WORKER_MESSAGES.labels(
-                collector=collector,
-                status=final_status.lower(),
-            ).inc()
-        finally:
-            WORKER_PROCESSING_DURATION.labels(collector=collector).observe(
-                time.monotonic() - started
-            )
+        with tracer.start_as_current_span(
+            "argos.process_message",
+            attributes={
+                "argos.collector": collector,
+                "argos.queue_id": str(message["id"]),
+                "argos.attempts": int(message["attempts"]),
+            },
+        ) as span:
+            try:
+                items = parse_payload(message["payload"])
+                span.set_attribute("argos.batch_size", len(items))
+                written = process_message(
+                    collector_name=collector,
+                    items=items,
+                    collected_at=message["collected_at"],
+                    bucket_at=message["bucket_at"],
+                )
+                mark_processed(message["id"])
+                WORKER_MESSAGES.labels(collector=collector, status="processed").inc()
+                WORKER_ITEMS_PROCESSED.labels(collector=collector).inc(len(items))
+                WORKER_RECORDS_WRITTEN.labels(collector=collector).inc(written)
+                span.set_attribute("argos.records_written", written)
+                logging.info(
+                    "processed queue_id=%s collector=%s items=%s written=%s attempts=%s",
+                    message["id"],
+                    collector,
+                    len(items),
+                    written,
+                    message["attempts"],
+                )
+            except Exception as exc:
+                span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                logging.exception(
+                    "worker failed queue_id=%s collector=%s",
+                    message["id"],
+                    collector,
+                )
+                final_status = mark_failed(message["id"], message["attempts"], repr(exc))
+                WORKER_MESSAGES.labels(
+                    collector=collector,
+                    status=final_status.lower(),
+                ).inc()
+                span.set_attribute("argos.final_status", final_status.lower())
+            finally:
+                WORKER_PROCESSING_DURATION.labels(collector=collector).observe(
+                    time.monotonic() - started
+                )
 
 
 if __name__ == "__main__":
