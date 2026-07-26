@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from urllib.parse import urljoin
+import time
+from urllib.parse import urljoin, urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -8,6 +9,11 @@ from urllib3.util.retry import Retry
 
 from app.auth import TokenManager
 from app.config import settings
+from app.observability.metrics import (
+    ARUBA_REQUEST_DURATION,
+    ARUBA_REQUEST_ERRORS,
+    ARUBA_REQUESTS,
+)
 
 
 class ArubaClient:
@@ -28,6 +34,40 @@ class ArubaClient:
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
 
+    @staticmethod
+    def metric_endpoint(url: str) -> str:
+        path = urlparse(url).path.strip("/")
+        return path or "root"
+
+    def get(self, url: str, headers: dict, params: dict) -> requests.Response:
+        endpoint = self.metric_endpoint(url)
+        started = time.monotonic()
+        try:
+            response = self.session.get(
+                url,
+                headers=headers,
+                params=params,
+                timeout=60,
+                verify=settings.aruba_verify_tls,
+            )
+            ARUBA_REQUESTS.labels(
+                endpoint=endpoint,
+                method="GET",
+                status=str(response.status_code),
+            ).inc()
+            return response
+        except requests.RequestException as exc:
+            ARUBA_REQUEST_ERRORS.labels(
+                endpoint=endpoint,
+                error_type=type(exc).__name__,
+            ).inc()
+            raise
+        finally:
+            ARUBA_REQUEST_DURATION.labels(
+                endpoint=endpoint,
+                method="GET",
+            ).observe(time.monotonic() - started)
+
     def pages(self, path: str, params: dict | None = None):
         params = dict(params or {})
         params.setdefault("limit", settings.aruba_page_limit)
@@ -39,26 +79,14 @@ class ArubaClient:
                 "Authorization": f"Bearer {self.tokens.get_access_token()}",
                 "Accept": "application/json",
             }
-            response = self.session.get(
-                url,
-                headers=headers,
-                params=params,
-                timeout=60,
-                verify=settings.aruba_verify_tls,
-            )
+            response = self.get(url, headers, params)
             if response.status_code == 401:
                 # Força nova autenticação e repete a chamada uma vez.
                 from app.auth import TOKEN_FILE
 
                 TOKEN_FILE.unlink(missing_ok=True)
                 headers["Authorization"] = f"Bearer {self.tokens.get_access_token()}"
-                response = self.session.get(
-                    url,
-                    headers=headers,
-                    params=params,
-                    timeout=60,
-                    verify=settings.aruba_verify_tls,
-                )
+                response = self.get(url, headers, params)
 
             response.raise_for_status()
             root = response.json()
@@ -83,7 +111,6 @@ class ArubaClient:
                 next_value = None
 
             # Na API New Central, `next` é um cursor, mesmo quando o valor parece numérico.
-            # Portanto, `next=2` não significa `offset=2` e também não deve virar `/v1/2`.
             if next_value not in (None, ""):
                 cursor = str(next_value).strip()
                 if cursor:

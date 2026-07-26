@@ -8,7 +8,17 @@ import os
 import time
 from datetime import datetime, timezone
 
+from prometheus_client import start_http_server
+
 from app.api import ArubaClient
+from app.observability.metrics import (
+    PRODUCER_COLLECTION_DURATION,
+    PRODUCER_CYCLES,
+    PRODUCER_LAST_SUCCESS,
+    PRODUCER_PAGES_COLLECTED,
+    PRODUCER_PAGES_QUEUED,
+    PRODUCER_PAGINATION_STOPS,
+)
 from app.queue import enqueue_page
 
 
@@ -60,69 +70,94 @@ def collect_endpoint(collector_name: str, endpoint: str) -> tuple[int, int]:
     seen_payloads: set[str] = set()
     pages = 0
     queued = 0
+    started = time.monotonic()
 
-    for page_number, items in enumerate(client.pages(endpoint), start=1):
-        if page_number > max_pages:
-            logging.warning(
-                "producer pagination stopped collector=%s endpoint=%s "
-                "page=%s reason=max_pages limit=%s",
-                collector_name,
-                endpoint,
-                page_number,
-                max_pages,
-            )
-            break
+    try:
+        for page_number, items in enumerate(client.pages(endpoint), start=1):
+            if page_number > max_pages:
+                PRODUCER_PAGINATION_STOPS.labels(
+                    collector=collector_name,
+                    reason="max_pages",
+                ).inc()
+                logging.warning(
+                    "producer pagination stopped collector=%s endpoint=%s "
+                    "page=%s reason=max_pages limit=%s",
+                    collector_name,
+                    endpoint,
+                    page_number,
+                    max_pages,
+                )
+                break
 
-        page_hash = payload_sha256(items)
-        if page_hash in seen_payloads:
-            logging.warning(
-                "producer pagination stopped collector=%s endpoint=%s "
-                "page=%s reason=repeated_payload hash=%s",
-                collector_name,
-                endpoint,
-                page_number,
-                page_hash,
-            )
-            break
+            page_hash = payload_sha256(items)
+            if page_hash in seen_payloads:
+                PRODUCER_PAGINATION_STOPS.labels(
+                    collector=collector_name,
+                    reason="repeated_payload",
+                ).inc()
+                logging.warning(
+                    "producer pagination stopped collector=%s endpoint=%s "
+                    "page=%s reason=repeated_payload hash=%s",
+                    collector_name,
+                    endpoint,
+                    page_number,
+                    page_hash,
+                )
+                break
 
-        seen_payloads.add(page_hash)
-        pages += 1
+            seen_payloads.add(page_hash)
+            pages += 1
+            PRODUCER_PAGES_COLLECTED.labels(collector=collector_name).inc()
 
-        if enqueue_page(
-            collector_name=collector_name,
-            endpoint=endpoint,
-            page_number=page_number,
-            collected_at=collected_at,
-            bucket_at=bucket_at,
-            items=items,
-        ):
-            queued += 1
+            if enqueue_page(
+                collector_name=collector_name,
+                endpoint=endpoint,
+                page_number=page_number,
+                collected_at=collected_at,
+                bucket_at=bucket_at,
+                items=items,
+            ):
+                queued += 1
+                PRODUCER_PAGES_QUEUED.labels(collector=collector_name).inc()
 
-    logging.info(
-        "producer collector=%s endpoint=%s pages=%s queued=%s",
-        collector_name,
-        endpoint,
-        pages,
-        queued,
-    )
-    return pages, queued
+        PRODUCER_LAST_SUCCESS.labels(collector=collector_name).set_to_current_time()
+        logging.info(
+            "producer collector=%s endpoint=%s pages=%s queued=%s",
+            collector_name,
+            endpoint,
+            pages,
+            queued,
+        )
+        return pages, queued
+    finally:
+        PRODUCER_COLLECTION_DURATION.labels(collector=collector_name).observe(
+            time.monotonic() - started
+        )
 
 
 async def run_cycle() -> None:
     concurrency = max(1, int(os.getenv("PRODUCER_CONCURRENCY", "3")))
     semaphore = asyncio.Semaphore(concurrency)
+    had_error = False
 
     async def run_one(name: str, endpoint: str) -> None:
+        nonlocal had_error
         async with semaphore:
             try:
                 await asyncio.to_thread(collect_endpoint, name, endpoint)
             except Exception:
+                had_error = True
                 logging.exception("producer failed collector=%s endpoint=%s", name, endpoint)
 
     await asyncio.gather(*(run_one(name, endpoint) for name, endpoint in endpoint_plan()))
+    PRODUCER_CYCLES.labels(status="failed" if had_error else "success").inc()
 
 
 async def main() -> None:
+    metrics_port = max(1, int(os.getenv("PRODUCER_METRICS_PORT", "9101")))
+    start_http_server(metrics_port)
+    logging.info("producer metrics listening port=%s", metrics_port)
+
     interval = max(60, int(os.getenv("COLLECTION_INTERVAL_SECONDS", "600")))
     while True:
         started = time.monotonic()

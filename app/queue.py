@@ -8,6 +8,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.db import connection
+from app.observability.metrics import (
+    QUEUE_BACKLOG,
+    QUEUE_MESSAGES,
+    QUEUE_OLDEST_PENDING_AGE,
+)
+
+
+QUEUE_STATUSES = ("PENDING", "PROCESSING", "PROCESSED", "FAILED", "DEAD")
 
 
 def utc_now() -> datetime:
@@ -99,7 +107,7 @@ def mark_processed(message_id: int) -> None:
         """, (now, message_id))
 
 
-def mark_failed(message_id: int, attempts: int, error: str) -> None:
+def mark_failed(message_id: int, attempts: int, error: str) -> str:
     max_attempts = int(os.getenv("QUEUE_MAX_ATTEMPTS", "5"))
     base_delay = int(os.getenv("QUEUE_RETRY_BASE_SECONDS", "30"))
     capped_error = error[-8000:]
@@ -121,3 +129,37 @@ def mark_failed(message_id: int, attempts: int, error: str) -> None:
                    locked_at=NULL, locked_by=NULL
              WHERE id=%s
         """, (status, available_at, capped_error, message_id))
+    return status
+
+
+def update_queue_metrics() -> None:
+    counts = {status: 0 for status in QUEUE_STATUSES}
+    oldest_available: datetime | None = None
+
+    with connection() as cnx:
+        cur = cnx.cursor(dictionary=True)
+        cur.execute("""
+            SELECT status, COUNT(*) AS total
+              FROM ingestion_queue
+             GROUP BY status
+        """)
+        for row in cur.fetchall():
+            counts[str(row["status"])] = int(row["total"])
+
+        cur.execute("""
+            SELECT MIN(available_at) AS oldest_available
+              FROM ingestion_queue
+             WHERE status IN ('PENDING','FAILED')
+               AND available_at <= %s
+        """, (utc_now(),))
+        row = cur.fetchone()
+        oldest_available = row["oldest_available"] if row else None
+
+    for status, total in counts.items():
+        QUEUE_MESSAGES.labels(status=status).set(total)
+
+    QUEUE_BACKLOG.set(counts["PENDING"] + counts["FAILED"])
+    age_seconds = 0.0
+    if oldest_available is not None:
+        age_seconds = max(0.0, (utc_now() - oldest_available).total_seconds())
+    QUEUE_OLDEST_PENDING_AGE.set(age_seconds)

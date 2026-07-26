@@ -32,17 +32,22 @@ services:
     depends_on:
       mariadb:
         condition: service_healthy
+    ports:
+      - "9101:9101"
     volumes:
       - token_data:/data
     command: ["python", "-m", "app.producer"]
 
   worker:
     build: .
+    container_name: aruba-worker
     restart: unless-stopped
     env_file: .env
     depends_on:
       mariadb:
         condition: service_healthy
+    ports:
+      - "9102:9102"
     command: ["python", "-m", "app.worker"]
 
 volumes:
