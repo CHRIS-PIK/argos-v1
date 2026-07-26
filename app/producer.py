@@ -8,6 +8,8 @@ import os
 import time
 from datetime import datetime, timezone
 
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from prometheus_client import start_http_server
 
 from app.api import ArubaClient
@@ -19,6 +21,7 @@ from app.observability.metrics import (
     PRODUCER_PAGES_QUEUED,
     PRODUCER_PAGINATION_STOPS,
 )
+from app.observability.runtime import configure_observability
 from app.queue import enqueue_page
 
 
@@ -26,6 +29,9 @@ logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(message)s",
 )
+
+configure_observability("producer")
+tracer = trace.get_tracer("argos.producer")
 
 # Licensing and AI Insights stay disabled until the customer explicitly requests
 # them and the corresponding New Central endpoints are validated for the tenant.
@@ -63,94 +69,118 @@ def payload_sha256(items: list) -> str:
 
 
 def collect_endpoint(collector_name: str, endpoint: str) -> tuple[int, int]:
-    client = ArubaClient()
-    collected_at = utc_now()
-    bucket_at = bucket_10m(collected_at)
-    max_pages = max(1, int(os.getenv("MAX_PAGES_PER_COLLECTOR", "100")))
-    seen_payloads: set[str] = set()
-    pages = 0
-    queued = 0
-    started = time.monotonic()
+    with tracer.start_as_current_span(
+        "argos.collect_endpoint",
+        attributes={
+            "argos.collector": collector_name,
+            "http.route": endpoint,
+        },
+    ) as span:
+        client = ArubaClient()
+        collected_at = utc_now()
+        bucket_at = bucket_10m(collected_at)
+        max_pages = max(1, int(os.getenv("MAX_PAGES_PER_COLLECTOR", "100")))
+        seen_payloads: set[str] = set()
+        pages = 0
+        queued = 0
+        started = time.monotonic()
 
-    try:
-        for page_number, items in enumerate(client.pages(endpoint), start=1):
-            if page_number > max_pages:
-                PRODUCER_PAGINATION_STOPS.labels(
-                    collector=collector_name,
-                    reason="max_pages",
-                ).inc()
-                logging.warning(
-                    "producer pagination stopped collector=%s endpoint=%s "
-                    "page=%s reason=max_pages limit=%s",
-                    collector_name,
-                    endpoint,
-                    page_number,
-                    max_pages,
-                )
-                break
+        try:
+            for page_number, items in enumerate(client.pages(endpoint), start=1):
+                if page_number > max_pages:
+                    PRODUCER_PAGINATION_STOPS.labels(
+                        collector=collector_name,
+                        reason="max_pages",
+                    ).inc()
+                    logging.warning(
+                        "producer pagination stopped collector=%s endpoint=%s "
+                        "page=%s reason=max_pages limit=%s",
+                        collector_name,
+                        endpoint,
+                        page_number,
+                        max_pages,
+                    )
+                    break
 
-            page_hash = payload_sha256(items)
-            if page_hash in seen_payloads:
-                PRODUCER_PAGINATION_STOPS.labels(
-                    collector=collector_name,
-                    reason="repeated_payload",
-                ).inc()
-                logging.warning(
-                    "producer pagination stopped collector=%s endpoint=%s "
-                    "page=%s reason=repeated_payload hash=%s",
-                    collector_name,
-                    endpoint,
-                    page_number,
-                    page_hash,
-                )
-                break
+                page_hash = payload_sha256(items)
+                if page_hash in seen_payloads:
+                    PRODUCER_PAGINATION_STOPS.labels(
+                        collector=collector_name,
+                        reason="repeated_payload",
+                    ).inc()
+                    logging.warning(
+                        "producer pagination stopped collector=%s endpoint=%s "
+                        "page=%s reason=repeated_payload hash=%s",
+                        collector_name,
+                        endpoint,
+                        page_number,
+                        page_hash,
+                    )
+                    break
 
-            seen_payloads.add(page_hash)
-            pages += 1
-            PRODUCER_PAGES_COLLECTED.labels(collector=collector_name).inc()
+                seen_payloads.add(page_hash)
+                pages += 1
+                PRODUCER_PAGES_COLLECTED.labels(collector=collector_name).inc()
 
-            if enqueue_page(
-                collector_name=collector_name,
-                endpoint=endpoint,
-                page_number=page_number,
-                collected_at=collected_at,
-                bucket_at=bucket_at,
-                items=items,
-            ):
-                queued += 1
-                PRODUCER_PAGES_QUEUED.labels(collector=collector_name).inc()
+                if enqueue_page(
+                    collector_name=collector_name,
+                    endpoint=endpoint,
+                    page_number=page_number,
+                    collected_at=collected_at,
+                    bucket_at=bucket_at,
+                    items=items,
+                ):
+                    queued += 1
+                    PRODUCER_PAGES_QUEUED.labels(collector=collector_name).inc()
 
-        PRODUCER_LAST_SUCCESS.labels(collector=collector_name).set_to_current_time()
-        logging.info(
-            "producer collector=%s endpoint=%s pages=%s queued=%s",
-            collector_name,
-            endpoint,
-            pages,
-            queued,
-        )
-        return pages, queued
-    finally:
-        PRODUCER_COLLECTION_DURATION.labels(collector=collector_name).observe(
-            time.monotonic() - started
-        )
+            PRODUCER_LAST_SUCCESS.labels(collector=collector_name).set_to_current_time()
+            span.set_attribute("argos.pages", pages)
+            span.set_attribute("argos.pages_queued", queued)
+            logging.info(
+                "producer collector=%s endpoint=%s pages=%s queued=%s",
+                collector_name,
+                endpoint,
+                pages,
+                queued,
+            )
+            return pages, queued
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            raise
+        finally:
+            PRODUCER_COLLECTION_DURATION.labels(collector=collector_name).observe(
+                time.monotonic() - started
+            )
 
 
 async def run_cycle() -> None:
-    concurrency = max(1, int(os.getenv("PRODUCER_CONCURRENCY", "3")))
-    semaphore = asyncio.Semaphore(concurrency)
-    had_error = False
+    with tracer.start_as_current_span("argos.producer_cycle") as span:
+        concurrency = max(1, int(os.getenv("PRODUCER_CONCURRENCY", "3")))
+        semaphore = asyncio.Semaphore(concurrency)
+        had_error = False
 
-    async def run_one(name: str, endpoint: str) -> None:
-        nonlocal had_error
-        async with semaphore:
-            try:
-                await asyncio.to_thread(collect_endpoint, name, endpoint)
-            except Exception:
-                had_error = True
-                logging.exception("producer failed collector=%s endpoint=%s", name, endpoint)
+        async def run_one(name: str, endpoint: str) -> None:
+            nonlocal had_error
+            async with semaphore:
+                try:
+                    await asyncio.to_thread(collect_endpoint, name, endpoint)
+                except Exception as exc:
+                    had_error = True
+                    span.record_exception(exc)
+                    logging.exception(
+                        "producer failed collector=%s endpoint=%s",
+                        name,
+                        endpoint,
+                    )
 
-    await asyncio.gather(*(run_one(name, endpoint) for name, endpoint in endpoint_plan()))
-    PRODUCER_CYCLES.labels(status="failed" if had_error else "success").inc()
+        await asyncio.gather(
+            *(run_one(name, endpoint) for name, endpoint in endpoint_plan())
+        )
+        PRODUCER_CYCLES.labels(status="failed" if had_error else "success").inc()
+        span.set_attribute("argos.cycle_status", "failed" if had_error else "success")
+        if had_error:
+            span.set_status(Status(StatusCode.ERROR, "one or more collectors failed"))
 
 
 async def main() -> None:
