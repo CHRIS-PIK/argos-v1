@@ -1,4 +1,4 @@
-# Argos — Infrastructure Telemetry Platform
+# Argos — Infrastructure Ingestion Platform
 
 O Argos é uma plataforma de ingestão e telemetria de infraestrutura. Atualmente, ele coleta dados da Aruba New Central, aplica autenticação, paginação segura, deduplicação e persistência durável, processa os payloads de forma assíncrona e disponibiliza dados normalizados, históricos e snapshots para consumo por relatórios, dashboards e integrações futuras.
 
