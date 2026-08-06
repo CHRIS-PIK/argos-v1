@@ -1,0 +1,78 @@
+ALTER TABLE switch_current
+  ADD COLUMN IF NOT EXISTS deployment VARCHAR(64) NULL AFTER entity_id,
+  ADD COLUMN IF NOT EXISTS status VARCHAR(64) NULL AFTER deployment,
+  ADD COLUMN IF NOT EXISTS firmware_version VARCHAR(128) NULL AFTER status,
+  ADD COLUMN IF NOT EXISTS ipv4 VARCHAR(64) NULL AFTER firmware_version,
+  ADD COLUMN IF NOT EXISTS ipv6 VARCHAR(128) NULL AFTER ipv4,
+  ADD COLUMN IF NOT EXISTS public_ip VARCHAR(64) NULL AFTER ipv6,
+  ADD COLUMN IF NOT EXISTS mac_address VARCHAR(64) NULL AFTER public_ip,
+  ADD COLUMN IF NOT EXISTS stack_id VARCHAR(128) NULL AFTER mac_address,
+  ADD COLUMN IF NOT EXISTS stack_member_id INT NULL AFTER stack_id,
+  ADD COLUMN IF NOT EXISTS switch_type VARCHAR(64) NULL AFTER stack_member_id,
+  ADD COLUMN IF NOT EXISTS serial_number VARCHAR(128) NULL AFTER switch_type,
+  ADD COLUMN IF NOT EXISTS switch_role VARCHAR(64) NULL AFTER serial_number,
+  ADD COLUMN IF NOT EXISTS site_id VARCHAR(128) NULL AFTER switch_role,
+  ADD COLUMN IF NOT EXISTS site_name VARCHAR(255) NULL AFTER site_id,
+  ADD COLUMN IF NOT EXISTS device_name VARCHAR(255) NULL AFTER site_name,
+  ADD COLUMN IF NOT EXISTS model VARCHAR(128) NULL AFTER device_name,
+  ADD COLUMN IF NOT EXISTS j_number VARCHAR(128) NULL AFTER model,
+  ADD COLUMN IF NOT EXISTS api_type VARCHAR(128) NULL AFTER j_number,
+  ADD COLUMN IF NOT EXISTS last_seen_at DATETIME(6) NULL AFTER api_type,
+  ADD COLUMN IF NOT EXISTS uptime_ms BIGINT NULL AFTER last_seen_at,
+  ADD COLUMN IF NOT EXISTS cpu_utilization DECIMAL(8,3) NULL AFTER uptime_ms,
+  ADD COLUMN IF NOT EXISTS memory_utilization DECIMAL(8,3) NULL AFTER cpu_utilization,
+  ADD COLUMN IF NOT EXISTS power_consumption DECIMAL(14,3) NULL AFTER memory_utilization,
+  ADD COLUMN IF NOT EXISTS system_temperature DECIMAL(10,3) NULL AFTER power_consumption,
+  ADD COLUMN IF NOT EXISTS poe_available DECIMAL(14,3) NULL AFTER system_temperature,
+  ADD COLUMN IF NOT EXISTS poe_consumption DECIMAL(14,3) NULL AFTER poe_available,
+  ADD COLUMN IF NOT EXISTS total_power_consumption DECIMAL(14,3) NULL AFTER poe_consumption,
+  ADD COLUMN IF NOT EXISTS uplink_ports TEXT NULL AFTER total_power_consumption,
+  ADD COLUMN IF NOT EXISTS usage_value DECIMAL(20,2) NULL AFTER uplink_ports,
+  ADD INDEX IF NOT EXISTS ix_switch_site (site_id),
+  ADD INDEX IF NOT EXISTS ix_switch_serial (serial_number),
+  ADD INDEX IF NOT EXISTS ix_switch_status (status);
+
+UPDATE switch_current
+SET
+  deployment = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.deployment')), 'null'),
+  status = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.status')), 'null'),
+  firmware_version = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.firmwareVersion')), 'null'),
+  ipv4 = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.ipv4')), 'null'),
+  ipv6 = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.ipv6')), 'null'),
+  public_ip = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.publicIp')), 'null'),
+  mac_address = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.macAddress')), 'null'),
+  stack_id = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.stackId')), 'null'),
+  stack_member_id = CAST(NULLIF(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.stackMemberId')), 'null'), '') AS SIGNED),
+  switch_type = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.switchType')), 'null'),
+  serial_number = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.serialNumber')), 'null'),
+  switch_role = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.switchRole')), 'null'),
+  site_id = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.siteId')), 'null'),
+  site_name = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.siteName')), 'null'),
+  device_name = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.deviceName')), 'null'),
+  model = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.model')), 'null'),
+  j_number = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.jNumber')), 'null'),
+  api_type = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.type')), 'null'),
+  last_seen_at = CASE
+    WHEN CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.lastSeenAt')), '0') AS UNSIGNED) = 0 THEN NULL
+    ELSE FROM_UNIXTIME(CAST(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.lastSeenAt')) AS UNSIGNED) / 1000)
+  END,
+  uptime_ms = CAST(NULLIF(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.uptimeInMillis')), 'null'), '') AS SIGNED),
+  cpu_utilization = JSON_EXTRACT(raw_json, '$.switchTrends[0].cpuUtilization'),
+  memory_utilization = JSON_EXTRACT(raw_json, '$.switchTrends[0].memoryUtilization'),
+  power_consumption = JSON_EXTRACT(raw_json, '$.switchTrends[0].powerConsumption'),
+  system_temperature = JSON_EXTRACT(raw_json, '$.switchTrends[0].systemTemperature'),
+  poe_available = JSON_EXTRACT(raw_json, '$.switchTrends[0].poeAvailable'),
+  poe_consumption = JSON_EXTRACT(raw_json, '$.switchTrends[0].poeConsumption'),
+  total_power_consumption = JSON_EXTRACT(raw_json, '$.switchTrends[0].totalPowerConsumption'),
+  uplink_ports = NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_json, '$.switchTrends[0].upLinkPorts')), 'null'),
+  usage_value = JSON_EXTRACT(raw_json, '$.switchTrends[0].usage');
+
+CREATE OR REPLACE VIEW vw_switch_latest AS
+SELECT
+  entity_id, deployment, status, firmware_version, ipv4, ipv6, public_ip,
+  mac_address, stack_id, stack_member_id, switch_type, serial_number,
+  switch_role, site_id, site_name, device_name, model, j_number, api_type,
+  last_seen_at, uptime_ms, cpu_utilization, memory_utilization,
+  power_consumption, system_temperature, poe_available, poe_consumption,
+  total_power_consumption, uplink_ports, usage_value, collected_at, updated_at
+FROM switch_current;

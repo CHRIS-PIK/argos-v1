@@ -97,10 +97,36 @@ ON DUPLICATE KEY UPDATE
 '''
 
 SPECIALIZED_RAW_TABLES = {
-    "switches": "switch_current",
     "radios": "radio_current",
     "alerts": "alert_current",
 }
+
+SWITCH_CURRENT_SQL = '''
+INSERT INTO switch_current
+(entity_id,deployment,status,firmware_version,ipv4,ipv6,public_ip,mac_address,
+ stack_id,stack_member_id,switch_type,serial_number,switch_role,site_id,site_name,
+ device_name,model,j_number,api_type,last_seen_at,uptime_ms,cpu_utilization,
+ memory_utilization,power_consumption,system_temperature,poe_available,
+ poe_consumption,total_power_consumption,uplink_ports,usage_value,
+ collected_at,updated_at,raw_json)
+VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+ON DUPLICATE KEY UPDATE
+ deployment=VALUES(deployment),status=VALUES(status),
+ firmware_version=VALUES(firmware_version),ipv4=VALUES(ipv4),ipv6=VALUES(ipv6),
+ public_ip=VALUES(public_ip),mac_address=VALUES(mac_address),stack_id=VALUES(stack_id),
+ stack_member_id=VALUES(stack_member_id),switch_type=VALUES(switch_type),
+ serial_number=VALUES(serial_number),switch_role=VALUES(switch_role),
+ site_id=VALUES(site_id),site_name=VALUES(site_name),device_name=VALUES(device_name),
+ model=VALUES(model),j_number=VALUES(j_number),api_type=VALUES(api_type),
+ last_seen_at=VALUES(last_seen_at),uptime_ms=VALUES(uptime_ms),
+ cpu_utilization=VALUES(cpu_utilization),memory_utilization=VALUES(memory_utilization),
+ power_consumption=VALUES(power_consumption),system_temperature=VALUES(system_temperature),
+ poe_available=VALUES(poe_available),poe_consumption=VALUES(poe_consumption),
+ total_power_consumption=VALUES(total_power_consumption),uplink_ports=VALUES(uplink_ports),
+ usage_value=VALUES(usage_value),collected_at=VALUES(collected_at),
+ updated_at=VALUES(updated_at),raw_json=VALUES(raw_json)
+'''
 
 
 def entity_id(item: dict[str, Any]) -> str:
@@ -150,6 +176,36 @@ def process_aps(items: list[dict[str, Any]], collected_at: datetime, bucket_at: 
         if metric_rows:
             cur.executemany(AP_METRIC_SQL, metric_rows)
     return len(current_rows) + len(metric_rows)
+
+
+def process_switches(items: list[dict[str, Any]], collected_at: datetime) -> int:
+    now = utc_now()
+    rows = []
+    for switch in items:
+        switch_id = entity_id(switch)
+        if not switch_id or switch.get("siteName") == "Onboarding":
+            continue
+        trends = switch.get("switchTrends") or []
+        trend = trends[0] if trends and isinstance(trends[0], dict) else {}
+        rows.append((
+            switch_id, switch.get("deployment"), switch.get("status"),
+            switch.get("firmwareVersion"), switch.get("ipv4"), switch.get("ipv6"),
+            switch.get("publicIp"), switch.get("macAddress"), switch.get("stackId"),
+            switch.get("stackMemberId"), switch.get("switchType"), switch.get("serialNumber"),
+            switch.get("switchRole"), switch.get("siteId"), switch.get("siteName"),
+            switch.get("deviceName"), switch.get("model"), switch.get("jNumber"),
+            switch.get("type"), parse_dt(switch.get("lastSeenAt")),
+            switch.get("uptimeInMillis"), trend.get("cpuUtilization"),
+            trend.get("memoryUtilization"), trend.get("powerConsumption"),
+            trend.get("systemTemperature"), trend.get("poeAvailable"),
+            trend.get("poeConsumption"), trend.get("totalPowerConsumption"),
+            trend.get("upLinkPorts"), trend.get("usage"), collected_at, now,
+            json.dumps(switch, ensure_ascii=False),
+        ))
+    if rows:
+        with connection() as cnx:
+            cnx.cursor().executemany(SWITCH_CURRENT_SQL, rows)
+    return len(rows)
 
 
 def process_clients(items: list[dict[str, Any]], collected_at: datetime, bucket_at: datetime) -> int:
@@ -278,6 +334,8 @@ def process_message(collector_name: str, items: list[dict[str, Any]], collected_
         written += process_aps(items, collected_at, bucket_at)
     elif collector_name == "clients":
         written += process_clients(items, collected_at, bucket_at)
+    elif collector_name == "switches":
+        written += process_switches(items, collected_at)
     elif collector_name in SPECIALIZED_RAW_TABLES:
         written += process_specialized_raw(collector_name, items, collected_at)
     return written

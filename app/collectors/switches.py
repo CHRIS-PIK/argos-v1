@@ -1,11 +1,15 @@
-from app.collectors.generic import collect_current
+from app.api import ArubaClient
+from app.processors import process_switches
+from app.runlog import RunLog
+from app.utils import utc_now
 
 
 def collect() -> None:
-    collect_current(
-        collector_name="switches",
-        endpoint="network-monitoring/v1/switches",
-        table="switch_current",
-        id_fields=("id", "serialNumber", "macAddress"),
-        row_filter=lambda x: x.get("siteName") != "Onboarding",
-    )
+    endpoint = "network-monitoring/v1/switches"
+    client = ArubaClient()
+    collected_at = utc_now()
+    with RunLog("switches") as run:
+        for items in client.pages(endpoint):
+            run.pages += 1
+            run.received += len(items)
+            run.written += process_switches(items, collected_at)
