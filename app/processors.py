@@ -98,7 +98,6 @@ ON DUPLICATE KEY UPDATE
 
 SPECIALIZED_RAW_TABLES = {
     "radios": "radio_current",
-    "alerts": "alert_current",
 }
 
 SWITCH_CURRENT_SQL = '''
@@ -126,6 +125,25 @@ ON DUPLICATE KEY UPDATE
  total_power_consumption=VALUES(total_power_consumption),uplink_ports=VALUES(uplink_ports),
  usage_value=VALUES(usage_value),collected_at=VALUES(collected_at),
  updated_at=VALUES(updated_at),raw_json=VALUES(raw_json)
+'''
+
+ALERT_CURRENT_SQL = '''
+INSERT INTO alert_current
+(entity_id,category,cleared_reason,created_at,deferred_until,device_type,
+ alert_key,name,notes,priority,resolved_notes,severity,site_name,status,summary,
+ api_type,source_updated_at,updated_by,action_json,root_cause_json,
+ collected_at,updated_at,raw_json)
+VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+ON DUPLICATE KEY UPDATE
+ category=VALUES(category),cleared_reason=VALUES(cleared_reason),
+ created_at=VALUES(created_at),deferred_until=VALUES(deferred_until),
+ device_type=VALUES(device_type),alert_key=VALUES(alert_key),name=VALUES(name),
+ notes=VALUES(notes),priority=VALUES(priority),resolved_notes=VALUES(resolved_notes),
+ severity=VALUES(severity),site_name=VALUES(site_name),status=VALUES(status),
+ summary=VALUES(summary),api_type=VALUES(api_type),
+ source_updated_at=VALUES(source_updated_at),updated_by=VALUES(updated_by),
+ action_json=VALUES(action_json),root_cause_json=VALUES(root_cause_json),
+ collected_at=VALUES(collected_at),updated_at=VALUES(updated_at),raw_json=VALUES(raw_json)
 '''
 
 
@@ -205,6 +223,30 @@ def process_switches(items: list[dict[str, Any]], collected_at: datetime) -> int
     if rows:
         with connection() as cnx:
             cnx.cursor().executemany(SWITCH_CURRENT_SQL, rows)
+    return len(rows)
+
+
+def process_alerts(items: list[dict[str, Any]], collected_at: datetime) -> int:
+    now = utc_now()
+    rows = []
+    for alert in items:
+        alert_id = entity_id(alert)
+        if not alert_id:
+            continue
+        rows.append((
+            alert_id, alert.get("category"), alert.get("clearedReason"),
+            parse_dt(alert.get("createdAt")), str(alert.get("deferredUntil") or ""),
+            alert.get("deviceType"), alert.get("key"), alert.get("name"),
+            alert.get("notes"), alert.get("priority"), alert.get("resolvedNotes"),
+            alert.get("severity"), alert.get("siteName"), alert.get("status"),
+            alert.get("summary"), alert.get("type"), parse_dt(alert.get("updatedAt")),
+            alert.get("updatedBy"), json.dumps(alert.get("action"), ensure_ascii=False),
+            json.dumps(alert.get("rootCause"), ensure_ascii=False), collected_at, now,
+            json.dumps(alert, ensure_ascii=False),
+        ))
+    if rows:
+        with connection() as cnx:
+            cnx.cursor().executemany(ALERT_CURRENT_SQL, rows)
     return len(rows)
 
 
@@ -336,6 +378,8 @@ def process_message(collector_name: str, items: list[dict[str, Any]], collected_
         written += process_clients(items, collected_at, bucket_at)
     elif collector_name == "switches":
         written += process_switches(items, collected_at)
+    elif collector_name == "alerts":
+        written += process_alerts(items, collected_at)
     elif collector_name in SPECIALIZED_RAW_TABLES:
         written += process_specialized_raw(collector_name, items, collected_at)
     return written
