@@ -25,19 +25,21 @@ COMPOSE_PARALLEL_LIMIT=1 docker compose build worker
 COMPOSE_PARALLEL_LIMIT=1 docker compose build collector-aruba
 
 echo
-echo "[4/7] Subindo MariaDB..."
-docker compose up -d mariadb
+echo "[4/7] Subindo Redis e ClickHouse..."
+docker compose up -d redis clickhouse
 
 echo
-echo "Aguardando MariaDB ficar saudável..."
+echo "Aguardando Redis e ClickHouse ficarem saudáveis..."
 
-until [ "$(docker inspect -f '{{.State.Health.Status}}' aruba-mariadb 2>/dev/null)" = "healthy" ]; do
-    printf "."
-    sleep 2
+for container in argos-redis argos-clickhouse; do
+    until [ "$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null)" = "healthy" ]; do
+        printf "."
+        sleep 2
+    done
 done
 
 echo
-echo "MariaDB pronto."
+echo "Redis e ClickHouse prontos."
 
 echo
 echo "[5/7] Subindo Ingest API, Worker e Coletor Aruba..."

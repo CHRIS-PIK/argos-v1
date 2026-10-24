@@ -1,25 +1,38 @@
 services:
-  mariadb:
-    image: mariadb:11.4
-    container_name: aruba-mariadb
+  redis:
+    image: redis:7.4-alpine
+    container_name: argos-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: argos-clickhouse
     restart: unless-stopped
     environment:
-      MARIADB_DATABASE: ${DB_NAME}
-      MARIADB_USER: ${DB_USER}
-      MARIADB_PASSWORD: ${DB_PASSWORD}
-      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-      - --innodb-buffer-pool-size=2G
-      - --max-connections=150
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     ports:
-      - "3306:3306"
+      - "8123:8123"
     volumes:
-      - mariadb_data:/var/lib/mysql
-      - ./sql:/docker-entrypoint-initdb.d:ro
+      - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse:/docker-entrypoint-initdb.d:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
     healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -30,6 +43,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      SCHEMAS_DIR: /schemas
       APP_ENVIRONMENT: ${APP_ENVIRONMENT:-homelab}
       HOST_NAME: ${HOST_NAME:-olympus}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4317}
@@ -39,8 +53,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      mariadb:
+      redis:
         condition: service_healthy
+    volumes:
+      - ./collectors/aruba/schemas:/schemas/aruba:ro
     ports:
       - "8000:8000"
     command: ["uvicorn", "app.ingest.main:app", "--host", "0.0.0.0", "--port", "8000"]
@@ -72,6 +88,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      SCHEMAS_DIR: /schemas
       APP_ENVIRONMENT: ${APP_ENVIRONMENT:-homelab}
       HOST_NAME: ${HOST_NAME:-olympus}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4317}
@@ -81,12 +98,17 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      mariadb:
+      redis:
         condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    volumes:
+      - ./collectors/aruba/schemas:/schemas/aruba:ro
     ports:
       - "9102:9102"
     command: ["python", "-m", "app.worker"]
 
 volumes:
-  mariadb_data:
+  clickhouse_data:
+  redis_data:
   token_data:

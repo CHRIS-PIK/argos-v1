@@ -4,22 +4,64 @@ import hashlib
 import json
 import os
 import socket
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
-from app.db import connection
+import redis
+
 from app.observability.metrics import (
     QUEUE_BACKLOG,
     QUEUE_MESSAGES,
     QUEUE_OLDEST_PENDING_AGE,
 )
 
+STREAM = os.getenv("QUEUE_STREAM", "argos:events")
+GROUP = os.getenv("QUEUE_GROUP", "argos-workers")
+DEAD_STREAM = f"{STREAM}:dead"
+DEDUP_PREFIX = f"{STREAM}:dedup:"
+DEDUP_TTL_SECONDS = int(os.getenv("QUEUE_DEDUP_TTL_SECONDS", str(7 * 24 * 3600)))
 
-QUEUE_STATUSES = ("PENDING", "PROCESSING", "PROCESSED", "FAILED", "DEAD")
+_client: redis.Redis | None = None
+
+
+def get_redis() -> redis.Redis:
+    global _client
+    if _client is None:
+        _client = redis.Redis.from_url(
+            os.getenv("REDIS_URL", "redis://redis:6379/0"), decode_responses=True
+        )
+    return _client
 
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def consumer_name() -> str:
+    return os.getenv("WORKER_ID") or f"{socket.gethostname()}-{os.getpid()}"
+
+
+def ensure_group() -> None:
+    try:
+        get_redis().xgroup_create(STREAM, GROUP, id="0", mkstream=True)
+    except redis.ResponseError as exc:
+        if "BUSYGROUP" not in str(exc):
+            raise
+
+
+def _decode(message_id: str, fields: dict[str, str]) -> dict[str, Any]:
+    return {
+        "id": message_id,
+        "tenant_id": fields["tenant_id"],
+        "source": fields["source"],
+        "collector_name": fields["event_type"],
+        "schema_version": fields["schema_version"],
+        "batch_id": fields.get("batch_id") or None,
+        "page_number": int(fields["page"]),
+        "collected_at": datetime.fromisoformat(fields["collected_at"]),
+        "bucket_at": datetime.fromisoformat(fields["bucket_at"]),
+        "payload": fields["payload"],
+    }
 
 
 def enqueue_event(
@@ -33,11 +75,7 @@ def enqueue_event(
     bucket_at: datetime,
     items: list[dict[str, Any]],
 ) -> bool:
-    """Persiste um lote validado. Retorna False quando o lote já havia sido enfileirado.
-
-    collector_name guarda o event_type e endpoint guarda a source, para que o worker
-    e os processors continuem recebendo o mesmo formato de mensagem.
-    """
+    """Persiste um lote validado. Retorna False quando o lote já havia sido enfileirado."""
     payload_text = json.dumps(items, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     payload_sha = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()
     if batch_id:
@@ -47,133 +85,105 @@ def enqueue_event(
             f"{tenant_id}|{source}|{event_type}|{bucket_at.isoformat()}|"
             f"{page_number}|{payload_sha}"
         )
-    dedup_key = hashlib.sha256(dedup_source.encode("utf-8")).hexdigest()
+    dedup_key = DEDUP_PREFIX + hashlib.sha256(dedup_source.encode("utf-8")).hexdigest()
 
-    sql = """
-    INSERT IGNORE INTO ingestion_queue
-    (tenant_id, collector_name, schema_version, batch_id, endpoint, page_number,
-     collected_at, bucket_at, payload, payload_sha256, dedup_key, status, available_at)
-    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s)
-    """
-    with connection() as cnx:
-        cur = cnx.cursor()
-        cur.execute(sql, (
-            tenant_id, event_type, schema_version, batch_id, source, page_number,
-            collected_at, bucket_at, payload_text, payload_sha, dedup_key, utc_now(),
-        ))
-        return cur.rowcount == 1
-
-
-def recover_stale_messages(lock_timeout_seconds: int) -> int:
-    cutoff = utc_now() - timedelta(seconds=lock_timeout_seconds)
-    sql = """
-    UPDATE ingestion_queue
-       SET status='PENDING', locked_at=NULL, locked_by=NULL,
-           available_at=%s,
-           error_message=CONCAT(COALESCE(error_message,''), '\nRecovered stale lock')
-     WHERE status='PROCESSING' AND locked_at < %s
-    """
-    now = utc_now()
-    with connection() as cnx:
-        cur = cnx.cursor()
-        cur.execute(sql, (now, cutoff))
-        return cur.rowcount
+    client = get_redis()
+    if not client.set(dedup_key, "1", nx=True, ex=DEDUP_TTL_SECONDS):
+        return False
+    try:
+        client.xadd(STREAM, {
+            "tenant_id": tenant_id,
+            "source": source,
+            "event_type": event_type,
+            "schema_version": schema_version,
+            "batch_id": batch_id or "",
+            "page": str(page_number),
+            "collected_at": collected_at.isoformat(),
+            "bucket_at": bucket_at.isoformat(),
+            "payload": payload_text,
+        })
+    except Exception:
+        # Sem isso um reenvio seria tratado como duplicado e o lote se perderia.
+        client.delete(dedup_key)
+        raise
+    return True
 
 
-def claim_message() -> dict[str, Any] | None:
-    worker_id = os.getenv("WORKER_ID") or f"{socket.gethostname()}-{os.getpid()}"
-    now = utc_now()
-    with connection() as cnx:
-        cur = cnx.cursor(dictionary=True)
-        cur.execute("""
-            SELECT id, collector_name, endpoint, page_number, collected_at,
-                   bucket_at, payload, attempts
-              FROM ingestion_queue
-             WHERE status IN ('PENDING','FAILED')
-               AND available_at <= %s
-             ORDER BY id
-             LIMIT 1
-             FOR UPDATE SKIP LOCKED
-        """, (now,))
-        row = cur.fetchone()
-        if not row:
-            return None
-
-        cur.execute("""
-            UPDATE ingestion_queue
-               SET status='PROCESSING', attempts=attempts+1,
-                   locked_at=%s, locked_by=%s, error_message=NULL
-             WHERE id=%s
-        """, (now, worker_id, row["id"]))
-        row["attempts"] = int(row["attempts"]) + 1
-        return row
+def read_new(count: int, block_ms: int) -> list[dict[str, Any]]:
+    result = get_redis().xreadgroup(
+        GROUP, consumer_name(), {STREAM: ">"}, count=count, block=block_ms
+    )
+    messages = []
+    for _stream, entries in result or []:
+        for message_id, fields in entries:
+            message = _decode(message_id, fields)
+            message["attempts"] = 1
+            messages.append(message)
+    return messages
 
 
-def mark_processed(message_id: int) -> None:
-    now = utc_now()
-    with connection() as cnx:
-        cur = cnx.cursor()
-        cur.execute("""
-            UPDATE ingestion_queue
-               SET status='PROCESSED', processed_at=%s,
-                   locked_at=NULL, locked_by=NULL, error_message=NULL
-             WHERE id=%s
-        """, (now, message_id))
+def claim_stale(min_idle_ms: int, count: int) -> list[dict[str, Any]]:
+    """Retoma mensagens entregues e não confirmadas (falha ou worker morto)."""
+    client = get_redis()
+    _next, entries, _deleted = client.xautoclaim(
+        STREAM, GROUP, consumer_name(), min_idle_time=min_idle_ms, start_id="0-0", count=count
+    )
+    messages = []
+    for message_id, fields in entries:
+        if not fields:
+            # Entrada já removida do stream; apenas limpa o pendente.
+            client.xack(STREAM, GROUP, message_id)
+            continue
+        pending = client.xpending_range(STREAM, GROUP, min=message_id, max=message_id, count=1)
+        message = _decode(message_id, fields)
+        message["attempts"] = int(pending[0]["times_delivered"]) if pending else 1
+        messages.append(message)
+    return messages
 
 
-def mark_failed(message_id: int, attempts: int, error: str) -> str:
-    max_attempts = int(os.getenv("QUEUE_MAX_ATTEMPTS", "5"))
-    base_delay = int(os.getenv("QUEUE_RETRY_BASE_SECONDS", "30"))
-    capped_error = error[-8000:]
-    now = utc_now()
+def ack(message_id: str) -> None:
+    client = get_redis()
+    pipe = client.pipeline()
+    pipe.xack(STREAM, GROUP, message_id)
+    pipe.xdel(STREAM, message_id)
+    pipe.execute()
 
-    if attempts >= max_attempts:
-        status = "DEAD"
-        available_at = now
-    else:
-        status = "FAILED"
-        delay = min(3600, base_delay * (2 ** max(0, attempts - 1)))
-        available_at = now + timedelta(seconds=delay)
 
-    with connection() as cnx:
-        cur = cnx.cursor()
-        cur.execute("""
-            UPDATE ingestion_queue
-               SET status=%s, available_at=%s, error_message=%s,
-                   locked_at=NULL, locked_by=NULL
-             WHERE id=%s
-        """, (status, available_at, capped_error, message_id))
-    return status
+def dead_letter(message: dict[str, Any], error: str) -> None:
+    client = get_redis()
+    original = client.xrange(STREAM, message["id"], message["id"])
+    fields = original[0][1] if original else {}
+    fields = {**fields, "error": error[-8000:], "original_id": message["id"],
+              "attempts": str(message["attempts"])}
+    pipe = client.pipeline()
+    pipe.xadd(DEAD_STREAM, fields)
+    pipe.xack(STREAM, GROUP, message["id"])
+    pipe.xdel(STREAM, message["id"])
+    pipe.execute()
+
+
+def should_give_up(attempts: int) -> bool:
+    return attempts >= int(os.getenv("QUEUE_MAX_ATTEMPTS", "5"))
 
 
 def update_queue_metrics() -> None:
-    counts = {status: 0 for status in QUEUE_STATUSES}
-    oldest_available: datetime | None = None
+    client = get_redis()
+    lag = 0
+    pending = 0
+    for group in client.xinfo_groups(STREAM):
+        if group["name"] == GROUP:
+            lag = int(group.get("lag") or 0)
+            pending = int(group.get("pending") or 0)
+    dead = int(client.xlen(DEAD_STREAM))
 
-    with connection() as cnx:
-        cur = cnx.cursor(dictionary=True)
-        cur.execute("""
-            SELECT status, COUNT(*) AS total
-              FROM ingestion_queue
-             GROUP BY status
-        """)
-        for row in cur.fetchall():
-            counts[str(row["status"])] = int(row["total"])
+    QUEUE_MESSAGES.labels(status="PENDING").set(lag)
+    QUEUE_MESSAGES.labels(status="PROCESSING").set(pending)
+    QUEUE_MESSAGES.labels(status="DEAD").set(dead)
+    QUEUE_BACKLOG.set(lag + pending)
 
-        cur.execute("""
-            SELECT MIN(available_at) AS oldest_available
-              FROM ingestion_queue
-             WHERE status IN ('PENDING','FAILED')
-               AND available_at <= %s
-        """, (utc_now(),))
-        row = cur.fetchone()
-        oldest_available = row["oldest_available"] if row else None
-
-    for status, total in counts.items():
-        QUEUE_MESSAGES.labels(status=status).set(total)
-
-    QUEUE_BACKLOG.set(counts["PENDING"] + counts["FAILED"])
     age_seconds = 0.0
-    if oldest_available is not None:
-        age_seconds = max(0.0, (utc_now() - oldest_available).total_seconds())
+    oldest = client.xrange(STREAM, count=1)
+    if oldest:
+        created_ms = int(oldest[0][0].split("-")[0])
+        age_seconds = max(0.0, datetime.now(timezone.utc).timestamp() - created_ms / 1000)
     QUEUE_OLDEST_PENDING_AGE.set(age_seconds)

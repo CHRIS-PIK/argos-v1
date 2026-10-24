@@ -7,7 +7,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-os.environ.setdefault("DB_PASSWORD", "test")
+from pathlib import Path
+
+ARUBA_SCHEMAS = Path(__file__).resolve().parents[1] / "collectors" / "aruba" / "schemas"
+os.environ["SCHEMAS_DIR"] = str(ARUBA_SCHEMAS)
 
 # O runtime de observabilidade exige OTLP/Pyroscope; nos testes basta um no-op.
 runtime_stub = types.ModuleType("app.observability.runtime")
@@ -24,7 +27,7 @@ API_KEY = "argos_test_key"
 
 def identity(allowed=("*",)) -> CollectorIdentity:
     return CollectorIdentity(
-        key_id=1, name="test", tenant_id="acme", allowed_event_types=frozenset(allowed)
+        key_id="k1", name="test", tenant_id="acme", allowed_event_types=frozenset(allowed)
     )
 
 
@@ -102,6 +105,7 @@ def test_item_without_identifier_is_rejected(client):
     response = post(client, body(items=[{"status": "Up"}]))
     assert response.status_code == 422
     assert response.json()["detail"][0].startswith("items[0]")
+    assert "entity_id" in response.json()["detail"][0]
 
 
 def test_empty_items_is_rejected(client):
@@ -136,7 +140,7 @@ def test_collected_at_bounds(client):
 
 
 def test_bucket_is_floored_to_ten_minutes(client):
-    stamp = datetime.now(timezone.utc).replace(minute=47, second=31, microsecond=0)
+    stamp = (datetime.now(timezone.utc) - timedelta(hours=2)).replace(minute=47, second=31, microsecond=0)
     post(client, body(collected_at=stamp.isoformat(), batch_id="bucket"))
     assert client.enqueued[-1]["bucket_at"].minute == 40
     assert client.enqueued[-1]["bucket_at"].second == 0

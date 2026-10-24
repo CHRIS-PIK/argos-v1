@@ -1,33 +1,33 @@
 # Contrato de ingestão
 
-A plataforma não coleta dados. Ela recebe lotes de eventos de **coletores** pela Ingest API, valida contra um schema registrado, persiste na fila e o worker processa como antes.
+A plataforma não coleta dados. Ela recebe lotes de eventos de **coletores** pela Ingest API, valida contra um schema registrado, persiste na fila (Redis Streams) e o worker grava no ClickHouse.
 
 ```text
-coletor (qualquer linguagem) --POST /v1/events--> ingest --> ingestion_queue --> worker --> storage
+coletor (qualquer linguagem) --POST /v1/events--> ingest --> Redis Streams --> worker --> ClickHouse
 ```
 
 ## Autenticação
 
-Cada coletor usa uma API key no header `X-API-Key`. A chave pertence a um `tenant_id` e pode ser restrita a alguns `event_type`.
+Cada coletor usa uma API key no header `X-API-Key`. A chave pertence a um `tenant_id` e pode ser restrita a alguns `event_type`. As chaves ficam no Redis (só o hash SHA-256).
 
 ```bash
-docker compose exec ingest python -m app.ingest.keys create --name aruba --tenant default --event-types aps,clients,switches,radios,alerts
-docker compose exec ingest python -m app.ingest.keys revoke --name aruba
+docker compose exec ingest python -m app.ingest.keys create --name meu-coletor --tenant default --event-types generic
+docker compose exec ingest python -m app.ingest.keys revoke --name meu-coletor
 ```
 
-O valor da chave é exibido uma única vez; no banco fica só o hash SHA-256.
+O valor da chave é exibido uma única vez. Mudanças de revogação levam até 30 s para valer (cache da API).
 
 ## `POST /v1/events`
 
 ```json
 {
-  "source": "aruba-central",
-  "event_type": "aps",
+  "source": "meu-sistema",
+  "event_type": "generic",
   "schema_version": "1",
   "batch_id": "id-unico-do-lote",
   "page": 1,
   "collected_at": "2026-10-24T19:40:00Z",
-  "items": [{ "id": "ap-1", "status": "Up" }]
+  "items": [{ "id": "1", "name": "pedido 1", "status": "open" }]
 }
 ```
 
@@ -52,35 +52,50 @@ O valor da chave é exibido uma única vez; no banco fica só o hash SHA-256.
 | `422` | Payload fora do contrato; `detail` lista os erros. | Corrigir o dado; não reenviar igual. |
 | `429`, `5xx` | Falha temporária. | Reenviar com backoff, respeitando `Retry-After`. |
 
-`202` significa que o lote está **persistido na fila**; o processamento é assíncrono. Falhas no worker não voltam ao coletor: ficam em `FAILED`/`DEAD` na fila.
+`202` significa que o lote está **persistido na fila**; o processamento é assíncrono. Falhas no worker não voltam ao coletor: a mensagem é retentada e, esgotadas as tentativas, vai para a dead-letter (`argos:events:dead`).
 
-## Schemas
+## Schemas e mapeamento
 
-Ficam em `app/ingest/schemas/<event_type>.v<N>.json` (JSON Schema 2020-12) e validam **cada item**. O diretório pode ser trocado por `SCHEMAS_DIR`, por exemplo montando um ConfigMap no Kubernetes. Para criar um tipo novo, adicione o arquivo e reinicie a Ingest API.
+Um tipo de evento é definido por um arquivo `<event_type>.v<N>.json` (JSON Schema 2020-12). O schema faz duas coisas:
 
-`GET /v1/schemas` (com API key) lista os tipos e versões aceitos.
+1. **Valida cada item** (campos, tipos, obrigatórios).
+2. **Declara o mapeamento** em `x-argos`: de onde tirar os campos canônicos que viram colunas.
 
-Os schemas iniciais exigem que o item tenha ao menos um identificador reconhecido pelo worker (`id`, `serialNumber`, `clientId`, `macAddress`, `mac`, `subscriptionId`, `insightId` ou `alertId`). Os campos restantes são livres.
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["order_id"],
+  "x-argos": {
+    "entity_id": ["order_id"],
+    "name": ["customer.name"],
+    "status": ["state"],
+    "dimensions": { "region": "shipping.region", "store": "store_code" }
+  }
+}
+```
 
-Como o worker trata cada tipo:
+| Chave | Vira | Regra |
+|---|---|---|
+| `entity_id` | `entity_id` | Lista de caminhos; vale o primeiro preenchido. **Obrigatório**: item sem id é rejeitado com `422`. Padrão: `["id"]`. |
+| `name` | `name` | Lista de caminhos (opcional). |
+| `status` | `status` | Lista de caminhos (opcional). |
+| `dimensions` | `dimensions` | Mapa `chave -> caminho`; só entram as que existirem no item. |
 
-- `aps`, `clients`, `switches`, `alerts`: tabelas normalizadas atuais e históricos, além do bruto.
-- `radios`: tabela `radio_current`, além do bruto.
-- qualquer outro tipo, incluindo `generic`: apenas `raw_entity_current` e `raw_entity_snapshot_10m`.
+Caminhos aninhados usam ponto (`customer.name`). O item completo sempre fica em `payload`.
 
-## Limitações conhecidas
+Onde ficam os schemas:
 
-- `raw_entity_current` tem chave `(collector_name, entity_id)`: duas `source` diferentes enviando o mesmo `event_type` e o mesmo id sobrescrevem uma à outra. Isso desaparece com o novo armazenamento (fase 2); até lá, use `event_type` distintos por source.
-- `tenant_id` é gravado na fila, mas o worker ainda não o propaga para as tabelas de destino.
+- `app/ingest/schemas/`: apenas o `generic` (qualquer objeto com `id`).
+- Qualquer diretório listado em `SCHEMAS_DIR` (separado por `:` no Linux), buscado recursivamente. No compose, `collectors/aruba/schemas` é montado em `/schemas/aruba`. Em Kubernetes, use um ConfigMap.
+
+Para criar um tipo novo, adicione o arquivo e reinicie a Ingest API e o worker. `GET /v1/schemas` (com API key) lista o que está registrado.
 
 ## Coletores
 
-O coletor Aruba está em [`collectors/aruba`](../collectors/aruba). Ele é independente da plataforma (imagem, dependências e `.env` próprios) e só fala HTTP com a Ingest API. Use-o como referência para novos coletores.
+O coletor Aruba está em [`collectors/aruba`](../collectors/aruba) e traz seus próprios schemas. Ele é independente da plataforma (imagem, dependências e `.env` próprios) e só fala HTTP com a Ingest API. Use-o como referência para novos coletores.
 
-## Migração
+## Limitações conhecidas
 
-Aplique `sql/008_ingest_contract.sql` em bancos existentes (o init do Docker só roda em volume novo):
-
-```bash
-docker compose exec -T mariadb sh -c 'mariadb -u"$MARIADB_USER" -p"$MARIADB_PASSWORD" "$MARIADB_DATABASE"' < sql/008_ingest_contract.sql
-```
+- `schema_version` novas exigem arquivo novo; não há migração automática entre versões.
+- O ClickHouse recebe o payload bruto; não há tabelas colunares por tipo.

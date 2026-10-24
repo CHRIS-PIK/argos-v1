@@ -5,15 +5,18 @@ import hashlib
 import secrets
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
-from app.db import connection
+from app.queue import get_redis
 
 CACHE_TTL_SECONDS = 30
+KEY_PREFIX = "argos:keys:"
+INDEX = "argos:keys:index"
 
 
 @dataclass(frozen=True)
 class CollectorIdentity:
-    key_id: int
+    key_id: str
     name: str
     tenant_id: str
     allowed_event_types: frozenset[str]
@@ -27,7 +30,7 @@ def hash_key(raw_key: str) -> str:
 
 
 class KeyStore:
-    """Resolve API keys para identidades de coletor, com cache curto para não ir ao banco a cada request."""
+    """Resolve API keys para identidades de coletor, com cache curto para não ir ao Redis a cada request."""
 
     def __init__(self) -> None:
         self._cache: dict[str, tuple[float, CollectorIdentity | None]] = {}
@@ -45,53 +48,46 @@ class KeyStore:
 
     @staticmethod
     def _lookup(key_hash: str) -> CollectorIdentity | None:
-        with connection() as cnx:
-            cur = cnx.cursor(dictionary=True)
-            cur.execute(
-                """
-                SELECT id, name, tenant_id, allowed_event_types
-                  FROM collector_keys
-                 WHERE key_hash=%s AND enabled=1
-                """,
-                (key_hash,),
-            )
-            row = cur.fetchone()
-            if not row:
-                return None
-            cur.execute(
-                "UPDATE collector_keys SET last_used_at=UTC_TIMESTAMP(6) WHERE id=%s",
-                (row["id"],),
-            )
+        client = get_redis()
+        record = client.hgetall(KEY_PREFIX + key_hash)
+        if not record or record.get("enabled") != "1":
+            return None
+        client.hset(KEY_PREFIX + key_hash, "last_used_at", datetime.now(timezone.utc).isoformat())
         allowed = frozenset(
-            part.strip() for part in str(row["allowed_event_types"]).split(",") if part.strip()
+            part.strip() for part in record.get("allowed_event_types", "*").split(",") if part.strip()
         )
         return CollectorIdentity(
-            key_id=int(row["id"]),
-            name=str(row["name"]),
-            tenant_id=str(row["tenant_id"]),
+            key_id=key_hash[:12],
+            name=record["name"],
+            tenant_id=record.get("tenant_id", "default"),
             allowed_event_types=allowed,
         )
 
 
 def create_key(name: str, tenant_id: str, allowed_event_types: str) -> str:
     raw_key = "argos_" + secrets.token_urlsafe(32)
-    with connection() as cnx:
-        cur = cnx.cursor()
-        cur.execute(
-            """
-            INSERT INTO collector_keys (name, key_hash, tenant_id, allowed_event_types)
-            VALUES (%s,%s,%s,%s)
-            """,
-            (name, hash_key(raw_key), tenant_id, allowed_event_types),
-        )
+    key_hash = hash_key(raw_key)
+    client = get_redis()
+    client.hset(KEY_PREFIX + key_hash, mapping={
+        "name": name,
+        "tenant_id": tenant_id,
+        "allowed_event_types": allowed_event_types,
+        "enabled": "1",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    client.sadd(INDEX, key_hash)
     return raw_key
 
 
 def revoke_key(name: str) -> int:
-    with connection() as cnx:
-        cur = cnx.cursor()
-        cur.execute("UPDATE collector_keys SET enabled=0 WHERE name=%s", (name,))
-        return cur.rowcount
+    client = get_redis()
+    revoked = 0
+    for key_hash in client.smembers(INDEX):
+        record_key = KEY_PREFIX + key_hash
+        if client.hget(record_key, "name") == name and client.hget(record_key, "enabled") == "1":
+            client.hset(record_key, "enabled", "0")
+            revoked += 1
+    return revoked
 
 
 def main() -> None:
