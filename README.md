@@ -79,3 +79,4 @@ cd web && npm ci && npm test && npm run build
 - [Contrato de ingestão](docs/ingest-contract.md)
 - [Armazenamento no ClickHouse](docs/clickhouse.md)
 - [Query API e interface web](docs/query-and-web.md)
+- [Coletor de demonstração (USGS e Open-Meteo)](docs/demo-collector.md)
