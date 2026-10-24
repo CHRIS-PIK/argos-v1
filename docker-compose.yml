@@ -92,6 +92,15 @@ services:
       - "8001:8001"
     command: ["uvicorn", "app.query.main:app", "--host", "0.0.0.0", "--port", "8001"]
 
+  web:
+    build: ./web
+    container_name: argos-web
+    restart: unless-stopped
+    depends_on:
+      - query
+    ports:
+      - "8080:80"
+
   collector-aruba:
     build: ./collectors/aruba
     container_name: argos-collector-aruba

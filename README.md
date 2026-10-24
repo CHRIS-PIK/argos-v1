@@ -6,6 +6,8 @@ O **Argos** recebe eventos de qualquer fonte, valida contra um contrato, enfilei
 coletor A ─┐
 coletor B ─┼─ POST /v1/events ─> Ingest API ─> Redis Streams ─> worker ─> ClickHouse
 coletor C ─┘   (API key)        (valida)       (fila durável)  (mapeia)   events / entity_latest
+                                                                                   │
+                                  navegador ─> web (nginx) ─> Query API ───────────┘
 ```
 
 ## Componentes
@@ -16,6 +18,8 @@ coletor C ─┘   (API key)        (valida)       (fila durável)  (mapeia)   e
 | **Fila** (Redis Streams) | Entrega durável com consumer group, retomada de mensagens presas, retries e dead-letter. |
 | **Worker** (`app/worker.py`) | Lê a fila, extrai os campos canônicos usando o mapeamento do schema e grava no ClickHouse. |
 | **ClickHouse** | `events` (histórico, buckets de 10 min) e `entity_latest` (estado atual), isolados por `tenant_id` e `source`. |
+| **Query API** (`app/query`) | Consulta entidades, eventos e catálogo (`/v1/meta`), com filtros por dimensão, paginação por cursor e exportação (CSV, JSON Lines, XLSX, Parquet). Exige API key com papel `reader`. |
+| **Web** (`web/`) | Interface React para explorar e exportar os dados (entidades, eventos, detalhe, exportações, fontes e fila). |
 | **Coletores** (`collectors/`) | Programas independentes que fazem o pull e enviam. `collectors/aruba` é a referência. |
 
 ## Agnóstico por construção
@@ -33,11 +37,17 @@ cp collectors/aruba/.env.example collectors/aruba/.env   # preencha as credencia
 ./deploy.sh
 ```
 
-Crie a chave do coletor e coloque em `ARGOS_API_KEY` no `collectors/aruba/.env`:
+Crie a chave do coletor e coloque em `ARGOS_API_KEY` no `collectors/aruba/.env` (as chaves têm papel: `collector` envia eventos, `reader` consulta, `admin` faz tudo):
 
 ```bash
 docker compose exec ingest python -m app.ingest.keys create --name aruba --tenant default
 docker compose up -d --force-recreate collector-aruba
+```
+
+Crie uma chave de leitura para entrar na interface (http://localhost:8080):
+
+```bash
+docker compose exec ingest python -m app.ingest.keys create --name ana --tenant default --role reader
 ```
 
 Teste rápido com o schema `generic`:
@@ -51,13 +61,15 @@ curl -X POST http://localhost:8000/v1/events \
 ## Testes
 
 ```bash
-pip install -r requirements.txt pytest httpx fakeredis
+pip install -r requirements-query.txt pytest httpx fakeredis
 pytest
+
+cd web && npm ci && npm test && npm run build
 ```
 
 ## Observabilidade
 
-- Ingest API: `:8000/metrics` (`argos_ingest_*`).
+- Ingest API: `:8000/metrics` (`argos_ingest_*`). Query API: `:8001/metrics`.
 - Worker: `:9102/metrics` (`datalake_*`, fila e processamento).
 - Coletor Aruba: `:9101/metrics`.
 - Traces via OTLP e perfis via Pyroscope, como antes.
@@ -66,3 +78,4 @@ pytest
 
 - [Contrato de ingestão](docs/ingest-contract.md)
 - [Armazenamento no ClickHouse](docs/clickhouse.md)
+- [Query API e interface web](docs/query-and-web.md)
