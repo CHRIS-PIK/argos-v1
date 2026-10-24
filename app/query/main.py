@@ -3,20 +3,31 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.ingest.contract import SchemaRegistry, default_registry
-from app.ingest.keys import CollectorIdentity, KeyStore
+from app.ingest.keys import CollectorIdentity
 from app.observability.runtime import configure_observability
 from app.query import db
+from app.query.auth import keystore, require_admin, require_reader  # noqa: F401
+from app.query.exports import router as exports_router
+from app.query.sql import (
+    ENTITY_COLUMNS,
+    EVENT_COLUMNS,
+    entities_query,
+    entity_cursor,
+    event_cursor,
+    events_query,
+    resolve_window,
+)
 from app.query.filters import (
     Filters,
+    common_filters,
     decode_cursor,
-    dimensions_from_query,
     encode_cursor,
 )
 
@@ -28,29 +39,10 @@ logging.basicConfig(
 configure_observability("query")
 
 MAX_PAGE = 1000
-DEFAULT_WINDOW = timedelta(hours=24)
 
 app = FastAPI(title="Argos Query API", version="1")
-keystore = KeyStore()
+app.include_router(exports_router)
 registry: SchemaRegistry = default_registry()
-
-
-def require_reader(x_api_key: str | None = Header(default=None)) -> CollectorIdentity:
-    if not x_api_key:
-        raise HTTPException(status_code=401, detail="missing X-API-Key")
-    identity = keystore.authenticate(x_api_key)
-    if identity is None:
-        raise HTTPException(status_code=401, detail="invalid API key")
-    if not identity.has_role("reader"):
-        raise HTTPException(status_code=403, detail="API key role cannot read data")
-    return identity
-
-
-def require_admin(x_api_key: str | None = Header(default=None)) -> CollectorIdentity:
-    identity = require_reader(x_api_key)
-    if not identity.has_role("admin"):
-        raise HTTPException(status_code=403, detail="admin role required")
-    return identity
 
 
 def iso(value: Any) -> Any:
@@ -71,32 +63,6 @@ def serialize(row: dict[str, Any], include_payload: bool) -> dict[str, Any]:
     return out
 
 
-def common_filters(
-    request: Request,
-    event_type: str | None = Query(default=None, max_length=64),
-    source: str | None = Query(default=None, max_length=64),
-    status: str | None = Query(default=None, max_length=128),
-    q: str | None = Query(default=None, max_length=128, description="Busca em nome e id"),
-) -> Filters:
-    return Filters(
-        event_type=event_type,
-        source=source,
-        status=status,
-        q=q,
-        dimensions=dimensions_from_query(request.query_params),
-    )
-
-
-ENTITY_COLUMNS = (
-    "tenant_id, event_type, source, schema_version, entity_id, name, status, dimensions, "
-    "collected_at, ingested_at, batch_id"
-)
-EVENT_COLUMNS = (
-    "tenant_id, event_type, source, schema_version, entity_id, bucket_at, name, status, "
-    "dimensions, collected_at, ingested_at, batch_id"
-)
-
-
 def _page(rows: list[dict[str, Any]], limit: int, cursor_of) -> tuple[list[dict[str, Any]], str | None]:
     if len(rows) > limit:
         rows = rows[:limit]
@@ -112,20 +78,9 @@ def list_entities(
     cursor: str | None = None,
     include_payload: bool = False,
 ):
-    clauses, params = filters.where(identity)
-    if cursor:
-        last = decode_cursor(cursor, 3)
-        clauses.append("(event_type, source, entity_id) > ({c0:String}, {c1:String}, {c2:String})")
-        params.update(c0=str(last[0]), c1=str(last[1]), c2=str(last[2]))
-    columns = ENTITY_COLUMNS + (", payload" if include_payload else "")
-    params["limit"] = limit + 1
-    sql = (
-        f"SELECT {columns} FROM entity_latest FINAL WHERE {' AND '.join(clauses)} "
-        "ORDER BY event_type, source, entity_id LIMIT {limit:UInt32}"
-    )
-    page, next_cursor = _page(
-        db.rows(sql, params), limit, lambda r: [r["event_type"], r["source"], r["entity_id"]]
-    )
+    last = decode_cursor(cursor, 3) if cursor else None
+    sql, params = entities_query(filters, identity, limit + 1, last, include_payload)
+    page, next_cursor = _page(db.rows(sql, params), limit, entity_cursor)
     return {
         "items": [serialize(row, include_payload) for row in page],
         "next_cursor": next_cursor,
@@ -174,7 +129,6 @@ def get_entity(
 
 @app.get("/v1/events")
 def list_events(
-    request: Request,
     filters: Filters = Depends(common_filters),
     identity: CollectorIdentity = Depends(require_reader),
     entity_id: str | None = Query(default=None, max_length=512),
@@ -185,43 +139,12 @@ def list_events(
     include_payload: bool = False,
 ):
     filters.entity_id = entity_id
-    clauses, params = filters.where(identity)
-
-    now = datetime.now(timezone.utc)
-    time_to = time_to or now
-    time_from = time_from or (time_to - DEFAULT_WINDOW)
-    if time_from.tzinfo is None:
-        time_from = time_from.replace(tzinfo=timezone.utc)
-    if time_to.tzinfo is None:
-        time_to = time_to.replace(tzinfo=timezone.utc)
-    if time_from >= time_to:
-        raise HTTPException(status_code=422, detail="'from' must be before 'to'")
-    clauses.append("bucket_at >= {t_from:DateTime('UTC')} AND bucket_at <= {t_to:DateTime('UTC')}")
-    params.update(t_from=time_from, t_to=time_to)
-
-    if cursor:
-        last = decode_cursor(cursor, 4)
-        clauses.append(
-            "(bucket_at, event_type, source, entity_id) < "
-            "(toDateTime({c0:UInt32}, 'UTC'), {c1:String}, {c2:String}, {c3:String})"
-        )
-        params.update(c0=int(last[0]), c1=str(last[1]), c2=str(last[2]), c3=str(last[3]))
-
-    columns = EVENT_COLUMNS + (", payload" if include_payload else "")
-    params["limit"] = limit + 1
-    sql = (
-        f"SELECT {columns} FROM events FINAL WHERE {' AND '.join(clauses)} "
-        "ORDER BY bucket_at DESC, event_type DESC, source DESC, entity_id DESC "
-        "LIMIT {limit:UInt32}"
+    time_from, time_to = resolve_window(time_from, time_to)
+    last = decode_cursor(cursor, 4) if cursor else None
+    sql, params = events_query(
+        filters, identity, time_from, time_to, limit + 1, last, include_payload
     )
-
-    def cursor_of(row: dict[str, Any]) -> list[Any]:
-        bucket = row["bucket_at"]
-        if bucket.tzinfo is None:
-            bucket = bucket.replace(tzinfo=timezone.utc)
-        return [int(bucket.timestamp()), row["event_type"], row["source"], row["entity_id"]]
-
-    page, next_cursor = _page(db.rows(sql, params), limit, cursor_of)
+    page, next_cursor = _page(db.rows(sql, params), limit, event_cursor)
     return {
         "items": [serialize(row, include_payload) for row in page],
         "next_cursor": next_cursor,

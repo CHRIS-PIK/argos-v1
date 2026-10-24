@@ -22,6 +22,7 @@ docker compose config --quiet
 echo "[3/7] Buildando imagens..."
 COMPOSE_PARALLEL_LIMIT=1 docker compose build --pull ingest
 COMPOSE_PARALLEL_LIMIT=1 docker compose build worker
+COMPOSE_PARALLEL_LIMIT=1 docker compose build query
 COMPOSE_PARALLEL_LIMIT=1 docker compose build collector-aruba
 
 echo
@@ -43,7 +44,7 @@ echo "Redis e ClickHouse prontos."
 
 echo
 echo "[5/7] Subindo Ingest API, Worker e Coletor Aruba..."
-docker compose up -d ingest worker collector-aruba
+docker compose up -d ingest query worker collector-aruba
 
 echo
 echo "[6/7] Status da stack"
@@ -57,6 +58,11 @@ sleep 5
 echo
 echo "Ingest API:"
 curl -fs http://localhost:8000/healthz >/dev/null \
+    && echo "OK" \
+    || echo "Falhou"
+
+echo "Query API:"
+curl -fs http://localhost:8001/healthz >/dev/null \
     && echo "OK" \
     || echo "Falhou"
 
@@ -76,4 +82,4 @@ docker compose ps
 
 echo
 echo "Logs em tempo real:"
-echo "docker compose logs -f ingest worker collector-aruba"
+echo "docker compose logs -f ingest query worker collector-aruba"

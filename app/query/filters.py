@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Query, Request
 
 from app.ingest.keys import CollectorIdentity
 
@@ -86,3 +86,19 @@ def decode_cursor(cursor: str, size: int) -> list[Any]:
     if not isinstance(values, list) or len(values) != size:
         raise HTTPException(status_code=422, detail="invalid cursor")
     return values
+
+
+def common_filters(
+    request: Request,
+    event_type: str | None = Query(default=None, max_length=64),
+    source: str | None = Query(default=None, max_length=64),
+    status: str | None = Query(default=None, max_length=128),
+    q: str | None = Query(default=None, max_length=128, description="Busca em nome e id"),
+) -> Filters:
+    return Filters(
+        event_type=event_type,
+        source=source,
+        status=status,
+        q=q,
+        dimensions=dimensions_from_query(request.query_params),
+    )
