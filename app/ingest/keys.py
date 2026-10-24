@@ -20,6 +20,10 @@ class CollectorIdentity:
     name: str
     tenant_id: str
     allowed_event_types: frozenset[str]
+    role: str = "collector"
+
+    def has_role(self, *roles: str) -> bool:
+        return self.role == "admin" or self.role in roles
 
     def can_send(self, event_type: str) -> bool:
         return "*" in self.allowed_event_types or event_type in self.allowed_event_types
@@ -60,11 +64,19 @@ class KeyStore:
             key_id=key_hash[:12],
             name=record["name"],
             tenant_id=record.get("tenant_id", "default"),
+            role=record.get("role", "collector"),
             allowed_event_types=allowed,
         )
 
 
-def create_key(name: str, tenant_id: str, allowed_event_types: str) -> str:
+ROLES = ("collector", "reader", "admin")
+
+
+def create_key(
+    name: str, tenant_id: str, allowed_event_types: str, role: str = "collector"
+) -> str:
+    if role not in ROLES:
+        raise ValueError(f"role must be one of {ROLES}")
     raw_key = "argos_" + secrets.token_urlsafe(32)
     key_hash = hash_key(raw_key)
     client = get_redis()
@@ -72,6 +84,7 @@ def create_key(name: str, tenant_id: str, allowed_event_types: str) -> str:
         "name": name,
         "tenant_id": tenant_id,
         "allowed_event_types": allowed_event_types,
+        "role": role,
         "enabled": "1",
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
@@ -97,6 +110,8 @@ def main() -> None:
     create = sub.add_parser("create", help="Cria uma chave. O valor é exibido uma única vez.")
     create.add_argument("--name", required=True)
     create.add_argument("--tenant", default="default")
+    create.add_argument("--role", choices=ROLES, default="collector",
+                        help="collector envia eventos; reader consulta; admin faz tudo.")
     create.add_argument("--event-types", default="*", help="Lista separada por vírgula ou '*'.")
 
     revoke = sub.add_parser("revoke", help="Desativa as chaves com esse nome.")
@@ -104,7 +119,7 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.command == "create":
-        print(create_key(args.name, args.tenant, args.event_types))
+        print(create_key(args.name, args.tenant, args.event_types, args.role))
     else:
         print(f"revoked={revoke_key(args.name)}")
 

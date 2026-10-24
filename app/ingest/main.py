@@ -55,6 +55,8 @@ def require_collector(x_api_key: str | None = Header(default=None)) -> Collector
     identity = keystore.authenticate(x_api_key)
     if identity is None:
         raise HTTPException(status_code=401, detail="invalid API key")
+    if not identity.has_role("collector"):
+        raise HTTPException(status_code=403, detail="API key role cannot send events")
     return identity
 
 
