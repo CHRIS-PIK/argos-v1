@@ -2,51 +2,20 @@ from __future__ import annotations
 
 from prometheus_client import Counter, Gauge, Histogram
 
-PRODUCER_CYCLES = Counter(
-    "datalake_producer_cycles_total",
-    "Total de ciclos executados pelo producer.",
-    ["status"],
+INGEST_REQUESTS = Counter(
+    "argos_ingest_requests_total",
+    "Total de requisições recebidas na API de ingestão, por resultado.",
+    ["event_type", "result"],
 )
-PRODUCER_PAGES_COLLECTED = Counter(
-    "datalake_pages_collected_total",
-    "Total de páginas válidas coletadas.",
-    ["collector"],
+INGEST_ITEMS = Counter(
+    "argos_ingest_items_total",
+    "Total de itens aceitos na API de ingestão.",
+    ["event_type"],
 )
-PRODUCER_PAGES_QUEUED = Counter(
-    "datalake_pages_queued_total",
-    "Total de páginas inseridas na fila.",
-    ["collector"],
-)
-PRODUCER_COLLECTION_DURATION = Histogram(
-    "datalake_collection_duration_seconds",
-    "Tempo de coleta de cada endpoint.",
-    ["collector"],
-)
-PRODUCER_LAST_SUCCESS = Gauge(
-    "datalake_last_success_timestamp_seconds",
-    "Timestamp Unix da última coleta bem-sucedida.",
-    ["collector"],
-)
-PRODUCER_PAGINATION_STOPS = Counter(
-    "datalake_pagination_stops_total",
-    "Total de interrupções preventivas de paginação.",
-    ["collector", "reason"],
-)
-
-ARUBA_REQUESTS = Counter(
-    "aruba_requests_total",
-    "Total de requisições HTTP enviadas à API Aruba.",
-    ["endpoint", "method", "status"],
-)
-ARUBA_REQUEST_ERRORS = Counter(
-    "aruba_request_errors_total",
-    "Total de erros ao acessar a API Aruba.",
-    ["endpoint", "error_type"],
-)
-ARUBA_REQUEST_DURATION = Histogram(
-    "aruba_request_duration_seconds",
-    "Duração das requisições HTTP à API Aruba.",
-    ["endpoint", "method"],
+INGEST_REQUEST_DURATION = Histogram(
+    "argos_ingest_request_duration_seconds",
+    "Duração do tratamento de um POST /v1/events.",
+    ["event_type"],
 )
 
 WORKER_MESSAGES = Counter(

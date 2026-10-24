@@ -24,9 +24,9 @@ services:
       timeout: 5s
       retries: 10
 
-  producer:
+  ingest:
     build: .
-    container_name: aruba-producer
+    container_name: argos-ingest
     restart: unless-stopped
     env_file: .env
     environment:
@@ -42,10 +42,29 @@ services:
       mariadb:
         condition: service_healthy
     ports:
+      - "8000:8000"
+    command: ["uvicorn", "app.ingest.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  collector-aruba:
+    build: ./collectors/aruba
+    container_name: argos-collector-aruba
+    restart: unless-stopped
+    env_file: ./collectors/aruba/.env
+    environment:
+      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-homelab}
+      HOST_NAME: ${HOST_NAME:-olympus}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4317}
+      PYROSCOPE_SERVER_ADDRESS: ${PYROSCOPE_SERVER_ADDRESS:-http://host.docker.internal:4040}
+      PYROSCOPE_SAMPLE_RATE: ${PYROSCOPE_SAMPLE_RATE:-100}
+      PYROSCOPE_MEMORY_ENABLED: ${PYROSCOPE_MEMORY_ENABLED:-true}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - ingest
+    ports:
       - "9101:9101"
     volumes:
       - token_data:/data
-    command: ["python", "-m", "app.producer"]
 
   worker:
     build: .

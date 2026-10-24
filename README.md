@@ -20,8 +20,13 @@ Hoje o Argos combina:
                          HPE Aruba Central API
                                   |
                                   v
-                         producer (Python)
+                  coletor Aruba (collectors/aruba)
                   OAuth2 | paginação | retry
+                                  |
+                       POST /v1/events (API key)
+                                  |
+                                  v
+                       Ingest API (valida o contrato)
                                   |
                                   v
                        ingestion_queue (MariaDB)
@@ -44,7 +49,7 @@ Hoje o Argos combina:
                       Views / Power BI / Relatórios
 ```
 
-A fila desacopla a coleta do processamento. O producer pode continuar coletando páginas enquanto o worker processa os payloads no ritmo suportado pelo banco.
+A fila desacopla a coleta do processamento. O coletor pode continuar enviando páginas enquanto o worker processa os payloads no ritmo suportado pelo banco.
 
 Mais detalhes sobre concorrência, retries e garantias de entrega estão em [`ASYNC_ARCHITECTURE.md`](ASYNC_ARCHITECTURE.md).
 
@@ -53,7 +58,7 @@ Mais detalhes sobre concorrência, retries e garantias de entrega estão em [`AS
 O Argos produz os quatro principais sinais de observabilidade:
 
 ```text
-                        producer / worker
+                   ingest / worker / coletor
                                |
           +--------------------+--------------------+
           |                    |                    |
@@ -72,7 +77,7 @@ O Argos produz os quatro principais sinais de observabilidade:
                      \         |         /
                       +------ Grafana ---+
 
-                        producer / worker
+                   ingest / worker / coletor
                                |
                                v
                        Pyroscope SDK
@@ -103,7 +108,13 @@ Essa separação mantém a aplicação desacoplada dos backends. O Argos expõe 
 
 ## Serviços da aplicação
 
-### Producer
+### Ingest API
+
+Recebe lotes de eventos de qualquer coletor em `POST /v1/events`, autentica por API key, valida cada item contra o JSON Schema do `event_type`, grava na fila e responde `202`. Os detalhes do contrato estão em [`docs/ingest-contract.md`](docs/ingest-contract.md).
+
+### Coletor Aruba
+
+Vive em `collectors/aruba`, com imagem e `.env` próprios. A plataforma não conhece a Aruba: o coletor é só mais um cliente da Ingest API.
 
 Responsável por:
 
@@ -157,7 +168,7 @@ Licenças e AI Insights permanecem desabilitados até que os endpoints correspon
 Todos os coletores usam o mesmo pipeline:
 
 ```text
-endpoint -> paginação -> enqueue_page -> ingestion_queue
+endpoint -> paginação -> POST /v1/events -> ingestion_queue
          -> claim_message -> process_message -> banco
 ```
 
@@ -232,9 +243,9 @@ Esse nome será usado em:
 
 Evite renomeá-lo depois que dados já tiverem sido persistidos.
 
-### 2. Registrar o endpoint no producer
+### 2. Registrar o endpoint no coletor
 
-Edite `app/producer.py` e adicione o collector ao dicionário `STATIC_ENDPOINTS`:
+Edite `collectors/aruba/main.py` e adicione o collector ao dicionário `STATIC_ENDPOINTS`:
 
 ```python
 STATIC_ENDPOINTS = {
@@ -247,7 +258,7 @@ STATIC_ENDPOINTS = {
 }
 ```
 
-A partir disso, o producer passa automaticamente a:
+A partir disso, o coletor passa automaticamente a:
 
 - chamar o endpoint;
 - aplicar paginação;
@@ -255,7 +266,7 @@ A partir disso, o producer passa automaticamente a:
 - detectar páginas repetidas;
 - limitar o número máximo de páginas;
 - calcular hash do payload;
-- gravar cada página na fila;
+- enviar cada página à Ingest API;
 - emitir métricas e traces do collector.
 
 ### 3. Validar o formato de paginação
@@ -479,13 +490,13 @@ Nunca envie para logs, métricas ou traces:
 Suba os serviços:
 
 ```bash
-docker compose up -d --build producer worker
+docker compose up -d --build ingest worker collector-aruba
 ```
 
 Verifique os logs:
 
 ```bash
-docker compose logs -f producer worker
+docker compose logs -f ingest worker collector-aruba
 ```
 
 Confirme que o collector enfileirou mensagens:
@@ -580,16 +591,16 @@ docker compose up -d --build
 Em hosts com pouca memória, evite builds paralelos:
 
 ```bash
-COMPOSE_PARALLEL_LIMIT=1 docker compose build producer
+COMPOSE_PARALLEL_LIMIT=1 docker compose build ingest collector-aruba
 COMPOSE_PARALLEL_LIMIT=1 docker compose build worker
-docker compose up -d --force-recreate producer worker
+docker compose up -d --force-recreate ingest worker collector-aruba
 ```
 
 Acompanhe a aplicação:
 
 ```bash
 docker compose ps
-docker compose logs -f producer worker
+docker compose logs -f ingest worker collector-aruba
 ```
 
 ## Validação rápida
@@ -719,7 +730,7 @@ ORDER BY id DESC;
 
 ### Métricas
 
-O producer expõe métricas em `:9101` e o worker em `:9102`.
+A Ingest API expõe métricas em `:8000/metrics`, o coletor em `:9101` e o worker em `:9102`.
 
 Entre os indicadores disponíveis:
 

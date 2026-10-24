@@ -1,3 +1,5 @@
+> **Atualização:** a coleta saiu da plataforma. O antigo `producer` virou o coletor `collectors/aruba`, que envia lotes para a Ingest API (`POST /v1/events`). Onde este documento diz "producer", leia "coletor". Veja [`docs/ingest-contract.md`](docs/ingest-contract.md).
+
 # Arquitetura assíncrona, durável e observável
 
 O Argos separa coleta, persistência intermediária e processamento em serviços independentes. Essa divisão evita que instabilidades da API, banco ou processadores interrompam toda a esteira e permite escalar producer e worker de forma separada.
@@ -114,22 +116,22 @@ As migrations devem ser idempotentes e aplicadas antes da recriação dos servi�
 ## Subir ou recriar a esteira
 
 ```bash
-docker compose up -d --build producer worker
+docker compose up -d --build ingest worker collector-aruba
 ```
 
 Em hosts com pouca memória:
 
 ```bash
-COMPOSE_PARALLEL_LIMIT=1 docker compose build producer
+COMPOSE_PARALLEL_LIMIT=1 docker compose build ingest collector-aruba
 COMPOSE_PARALLEL_LIMIT=1 docker compose build worker
-docker compose up -d --force-recreate producer worker
+docker compose up -d --force-recreate ingest worker collector-aruba
 ```
 
 Acompanhar:
 
 ```bash
 docker compose ps
-docker compose logs -f producer worker
+docker compose logs -f ingest worker collector-aruba
 ```
 
 ## Saúde da fila
