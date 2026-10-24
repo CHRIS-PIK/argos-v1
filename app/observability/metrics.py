@@ -18,6 +18,17 @@ INGEST_REQUEST_DURATION = Histogram(
     ["event_type"],
 )
 
+WORKER_CLICKHOUSE_ROWS = Counter(
+    "argos_clickhouse_rows_written_total",
+    "Total de linhas gravadas no ClickHouse pelo worker.",
+    ["collector"],
+)
+WORKER_CLICKHOUSE_ERRORS = Counter(
+    "argos_clickhouse_write_errors_total",
+    "Total de falhas de escrita no ClickHouse.",
+    ["collector"],
+)
+
 WORKER_MESSAGES = Counter(
     "datalake_messages_total",
     "Total de mensagens tratadas pelo worker.",

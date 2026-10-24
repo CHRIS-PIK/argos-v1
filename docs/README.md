@@ -3,3 +3,4 @@
 - [Migration 004 rebuild note](migration-004-rebuild-note.md)
 - [Clean rebuild checklist](rebuild-checklist.md)
 - [Contrato de ingestão](ingest-contract.md)
+- [ClickHouse (fase 2)](clickhouse.md)

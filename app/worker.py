@@ -10,6 +10,8 @@ from opentelemetry.trace import Status, StatusCode
 from prometheus_client import start_http_server
 
 from app.observability.metrics import (
+    WORKER_CLICKHOUSE_ERRORS,
+    WORKER_CLICKHOUSE_ROWS,
     WORKER_ITEMS_PROCESSED,
     WORKER_MESSAGES,
     WORKER_PROCESSING_DURATION,
@@ -18,6 +20,7 @@ from app.observability.metrics import (
 )
 from app.observability.runtime import configure_observability
 from app.processors import process_message
+from app.store import clickhouse as clickhouse_store
 from app.queue import (
     claim_message,
     mark_failed,
@@ -34,6 +37,7 @@ logging.basicConfig(
 
 configure_observability("worker")
 tracer = trace.get_tracer("argos.worker")
+sink = clickhouse_store.ClickHouseSink() if clickhouse_store.enabled() else None
 
 
 def parse_payload(value) -> list[dict]:
@@ -96,6 +100,13 @@ def main() -> None:
                     collected_at=message["collected_at"],
                     bucket_at=message["bucket_at"],
                 )
+                if sink is not None:
+                    try:
+                        ch_rows = sink.write(message, items)
+                    except Exception:
+                        WORKER_CLICKHOUSE_ERRORS.labels(collector=collector).inc()
+                        raise
+                    WORKER_CLICKHOUSE_ROWS.labels(collector=collector).inc(ch_rows)
                 mark_processed(message["id"])
                 WORKER_MESSAGES.labels(collector=collector, status="processed").inc()
                 WORKER_ITEMS_PROCESSED.labels(collector=collector).inc(len(items))

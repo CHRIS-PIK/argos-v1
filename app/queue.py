@@ -86,8 +86,8 @@ def claim_message() -> dict[str, Any] | None:
     with connection() as cnx:
         cur = cnx.cursor(dictionary=True)
         cur.execute("""
-            SELECT id, collector_name, endpoint, page_number, collected_at,
-                   bucket_at, payload, attempts
+            SELECT id, tenant_id, collector_name, endpoint AS source, schema_version,
+                   batch_id, page_number, collected_at, bucket_at, payload, attempts
               FROM ingestion_queue
              WHERE status IN ('PENDING','FAILED')
                AND available_at <= %s

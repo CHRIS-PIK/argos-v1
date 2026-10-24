@@ -24,6 +24,29 @@ services:
       timeout: 5s
       retries: 10
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: argos-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse:/docker-entrypoint-initdb.d:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   ingest:
     build: .
     container_name: argos-ingest
@@ -83,10 +106,13 @@ services:
     depends_on:
       mariadb:
         condition: service_healthy
+      clickhouse:
+        condition: service_healthy
     ports:
       - "9102:9102"
     command: ["python", "-m", "app.worker"]
 
 volumes:
+  clickhouse_data:
   mariadb_data:
   token_data:
