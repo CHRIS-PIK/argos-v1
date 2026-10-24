@@ -4,14 +4,14 @@ import json
 import logging
 import os
 import time
+from typing import Any
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from prometheus_client import start_http_server
 
+from app.ingest.contract import SchemaRegistry, default_registry
 from app.observability.metrics import (
-    WORKER_CLICKHOUSE_ERRORS,
-    WORKER_CLICKHOUSE_ROWS,
     WORKER_ITEMS_PROCESSED,
     WORKER_MESSAGES,
     WORKER_PROCESSING_DURATION,
@@ -19,25 +19,23 @@ from app.observability.metrics import (
     WORKER_STALE_RECOVERED,
 )
 from app.observability.runtime import configure_observability
-from app.processors import process_message
-from app.store import clickhouse as clickhouse_store
 from app.queue import (
-    claim_message,
-    mark_failed,
-    mark_processed,
-    recover_stale_messages,
+    ack,
+    claim_stale,
+    dead_letter,
+    ensure_group,
+    read_new,
+    should_give_up,
     update_queue_metrics,
 )
-
+from app.store.clickhouse import ClickHouseSink
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(message)s",
 )
 
-configure_observability("worker")
 tracer = trace.get_tracer("argos.worker")
-sink = clickhouse_store.ClickHouseSink() if clickhouse_store.enabled() else None
 
 
 def parse_payload(value) -> list[dict]:
@@ -48,14 +46,65 @@ def parse_payload(value) -> list[dict]:
     return value
 
 
+def handle_message(message: dict[str, Any], sink: ClickHouseSink) -> None:
+    """Processa uma mensagem: grava no ClickHouse e confirma. Em falha, deixa pendente
+    (será retomada por claim_stale) ou envia para a dead-letter ao esgotar as tentativas."""
+    collector = message["collector_name"]
+    started = time.monotonic()
+    with tracer.start_as_current_span(
+        "argos.process_message",
+        attributes={
+            "argos.event_type": collector,
+            "argos.source": message["source"],
+            "argos.tenant_id": message["tenant_id"],
+            "argos.queue_id": message["id"],
+            "argos.attempts": int(message["attempts"]),
+        },
+    ) as span:
+        try:
+            items = parse_payload(message["payload"])
+            span.set_attribute("argos.batch_size", len(items))
+            written = sink.write(message, items)
+            ack(message["id"])
+            WORKER_MESSAGES.labels(collector=collector, status="processed").inc()
+            WORKER_ITEMS_PROCESSED.labels(collector=collector).inc(len(items))
+            WORKER_RECORDS_WRITTEN.labels(collector=collector).inc(written)
+            span.set_attribute("argos.records_written", written)
+            logging.info(
+                "processed id=%s event_type=%s source=%s items=%s written=%s attempts=%s",
+                message["id"], collector, message["source"], len(items), written,
+                message["attempts"],
+            )
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            logging.exception("worker failed id=%s event_type=%s", message["id"], collector)
+            if should_give_up(message["attempts"]):
+                dead_letter(message, repr(exc))
+                WORKER_MESSAGES.labels(collector=collector, status="dead").inc()
+                span.set_attribute("argos.final_status", "dead")
+            else:
+                WORKER_MESSAGES.labels(collector=collector, status="failed").inc()
+        finally:
+            WORKER_PROCESSING_DURATION.labels(collector=collector).observe(
+                time.monotonic() - started
+            )
+
+
 def main() -> None:
+    configure_observability("worker")
+    registry: SchemaRegistry = default_registry()
+    sink = ClickHouseSink(registry)
+    ensure_group()
+
     metrics_port = max(1, int(os.getenv("WORKER_METRICS_PORT", "9102")))
     start_http_server(metrics_port)
     logging.info("worker metrics listening port=%s", metrics_port)
 
-    poll_seconds = max(1, int(os.getenv("WORKER_POLL_SECONDS", "2")))
-    lock_timeout = max(60, int(os.getenv("QUEUE_LOCK_TIMEOUT_SECONDS", "900")))
-    recover_every = max(30, int(os.getenv("QUEUE_RECOVER_EVERY_SECONDS", "60")))
+    batch = max(1, int(os.getenv("WORKER_BATCH_SIZE", "10")))
+    block_ms = max(100, int(os.getenv("WORKER_POLL_SECONDS", "2")) * 1000)
+    retry_idle_ms = max(1000, int(os.getenv("QUEUE_RETRY_SECONDS", "30")) * 1000)
+    recover_every = max(5, int(os.getenv("QUEUE_RECOVER_EVERY_SECONDS", "30")))
     queue_metrics_every = max(10, int(os.getenv("QUEUE_METRICS_INTERVAL_SECONDS", "30")))
     last_recovery = 0.0
     last_queue_metrics = 0.0
@@ -63,10 +112,12 @@ def main() -> None:
     while True:
         now = time.monotonic()
         if now - last_recovery >= recover_every:
-            recovered = recover_stale_messages(lock_timeout)
-            if recovered:
-                WORKER_STALE_RECOVERED.inc(recovered)
-                logging.warning("recovered stale queue messages=%s", recovered)
+            stale = claim_stale(retry_idle_ms, batch)
+            if stale:
+                WORKER_STALE_RECOVERED.inc(len(stale))
+                logging.warning("reclaimed pending messages=%s", len(stale))
+                for message in stale:
+                    handle_message(message, sink)
             last_recovery = now
 
         if now - last_queue_metrics >= queue_metrics_every:
@@ -76,68 +127,8 @@ def main() -> None:
                 logging.exception("failed to update queue metrics")
             last_queue_metrics = now
 
-        message = claim_message()
-        if not message:
-            time.sleep(poll_seconds)
-            continue
-
-        collector = message["collector_name"]
-        started = time.monotonic()
-        with tracer.start_as_current_span(
-            "argos.process_message",
-            attributes={
-                "argos.collector": collector,
-                "argos.queue_id": str(message["id"]),
-                "argos.attempts": int(message["attempts"]),
-            },
-        ) as span:
-            try:
-                items = parse_payload(message["payload"])
-                span.set_attribute("argos.batch_size", len(items))
-                written = process_message(
-                    collector_name=collector,
-                    items=items,
-                    collected_at=message["collected_at"],
-                    bucket_at=message["bucket_at"],
-                )
-                if sink is not None:
-                    try:
-                        ch_rows = sink.write(message, items)
-                    except Exception:
-                        WORKER_CLICKHOUSE_ERRORS.labels(collector=collector).inc()
-                        raise
-                    WORKER_CLICKHOUSE_ROWS.labels(collector=collector).inc(ch_rows)
-                mark_processed(message["id"])
-                WORKER_MESSAGES.labels(collector=collector, status="processed").inc()
-                WORKER_ITEMS_PROCESSED.labels(collector=collector).inc(len(items))
-                WORKER_RECORDS_WRITTEN.labels(collector=collector).inc(written)
-                span.set_attribute("argos.records_written", written)
-                logging.info(
-                    "processed queue_id=%s collector=%s items=%s written=%s attempts=%s",
-                    message["id"],
-                    collector,
-                    len(items),
-                    written,
-                    message["attempts"],
-                )
-            except Exception as exc:
-                span.record_exception(exc)
-                span.set_status(Status(StatusCode.ERROR, str(exc)))
-                logging.exception(
-                    "worker failed queue_id=%s collector=%s",
-                    message["id"],
-                    collector,
-                )
-                final_status = mark_failed(message["id"], message["attempts"], repr(exc))
-                WORKER_MESSAGES.labels(
-                    collector=collector,
-                    status=final_status.lower(),
-                ).inc()
-                span.set_attribute("argos.final_status", final_status.lower())
-            finally:
-                WORKER_PROCESSING_DURATION.labels(collector=collector).observe(
-                    time.monotonic() - started
-                )
+        for message in read_new(batch, block_ms):
+            handle_message(message, sink)
 
 
 if __name__ == "__main__":

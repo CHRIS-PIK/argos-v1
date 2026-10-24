@@ -1,25 +1,17 @@
-# Armazenamento no ClickHouse (fase 2)
+# Armazenamento no ClickHouse
 
-O worker passa a gravar também no ClickHouse, em **escrita dupla**: o MariaDB continua sendo gravado como antes, então Power BI e views existentes não mudam. A escrita no ClickHouse é desligada por padrão.
+O worker grava cada item validado em duas tabelas. O MariaDB não faz mais parte da plataforma.
 
 ```text
-ingestion_queue -> worker -+-> MariaDB (tabelas atuais, históricos, views)
-                           +-> ClickHouse (events, entity_latest)   [CLICKHOUSE_ENABLED=true]
+Redis Streams -> worker -> argos.events        (histórico)
+                        -> argos.entity_latest (estado atual)
 ```
 
-## Ativação
-
-1. `docker compose up -d clickhouse` (o schema de `clickhouse/001_events.sql` é aplicado na primeira subida do volume).
-2. No `.env`: `CLICKHOUSE_ENABLED=true` (e usuário/senha, se houver).
-3. `docker compose up -d --build worker`.
-
-Em volume já existente, aplique o schema manualmente:
+O schema fica em `clickhouse/001_events.sql` e é aplicado na primeira subida do volume. Em um volume já existente (ou se o schema mudar durante o desenvolvimento), recrie o volume ou aplique manualmente:
 
 ```bash
 docker compose exec -T clickhouse clickhouse-client --multiquery < clickhouse/001_events.sql
 ```
-
-Se a escrita no ClickHouse falhar, a mensagem volta para a fila (`FAILED`) e é reprocessada; os UPSERTs do MariaDB e a deduplicação do ClickHouse tornam isso seguro.
 
 ## Tabelas
 
@@ -29,16 +21,18 @@ Se a escrita no ClickHouse falhar, a mensagem volta para a fila (`FAILED`) e é 
 | `argos.entity_latest` | Última versão de cada entidade. | `(tenant_id, event_type, source, entity_id)` |
 | `argos.v_entity_latest` | `entity_latest FINAL`, já deduplicada. | |
 
-Ambas usam `ReplacingMergeTree`: gravar de novo a mesma chave substitui a linha (na fusão em segundo plano). Por isso leia sempre com `FINAL`, `argMax` ou pela view. `tenant_id` e `source` fazem parte da chave, o que elimina a colisão que existe em `raw_entity_current`.
+Colunas: `tenant_id`, `source`, `event_type`, `schema_version`, `entity_id`, `collected_at`, `ingested_at`, `name`, `status`, `dimensions` (`Map(String, String)`), `batch_id` e `payload` (o item original em JSON).
 
-O item original fica em `payload` (JSON como texto). Campos comuns (`site_id`, `site_name`, `entity_name`, `status`) são extraídos para colunas.
+`entity_id`, `name`, `status` e `dimensions` são extraídos pelo mapeamento `x-argos` do schema do tipo. Nenhuma coluna tem nome de uma fonte específica; o que for particular de uma fonte (site, região, centro de custo...) entra em `dimensions`.
+
+Ambas usam `ReplacingMergeTree`: gravar de novo a mesma chave substitui a linha na fusão em segundo plano, o que torna o reprocessamento de uma mensagem idempotente. Por isso leia sempre com `FINAL`, `argMax` ou pela view.
 
 ## Consultas
 
-Estado atual de APs com problema:
+Estado atual de entidades com problema, de qualquer fonte:
 
 ```sql
-SELECT entity_id, entity_name, site_name, status
+SELECT source, entity_id, name, status, dimensions['site_name'] AS site
 FROM argos.v_entity_latest
 WHERE tenant_id = 'default' AND event_type = 'aps' AND status != 'Up';
 ```
@@ -52,9 +46,9 @@ WHERE entity_id = 'ap-1' AND bucket_at >= now() - INTERVAL 1 DAY
 ORDER BY bucket_at;
 ```
 
-## Limites desta fase
+## Limites
 
-- Só dados novos são gravados; não há backfill do histórico do MariaDB.
-- Hoje o ClickHouse guarda o payload bruto. Tabelas colunares por tipo (equivalentes a `ap_metrics_10m`) podem vir via materialized views quando houver consultas que as justifiquem.
-- Sem réplica nem shard: instância única. Para Kubernetes, usar o operador do ClickHouse numa fase própria.
-- O MariaDB só sai do caminho depois de validar os números lado a lado (contagem de entidades por tipo e por bucket).
+- Sem backfill de dados antigos (o MariaDB foi descartado).
+- O payload é guardado como texto; tabelas colunares por tipo podem ser criadas depois com materialized views, quando houver consultas que as justifiquem.
+- Instância única, sem réplica nem shard. Para Kubernetes, usar o operador do ClickHouse numa fase própria.
+- Se a escrita no ClickHouse falhar, a mensagem fica pendente no Redis e é reprocessada; depois de `QUEUE_MAX_ATTEMPTS` falhas vai para `argos:events:dead`.

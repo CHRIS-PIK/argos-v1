@@ -2,7 +2,7 @@ CREATE DATABASE IF NOT EXISTS argos;
 
 -- Histórico: um registro por entidade por bucket de 10 minutos.
 -- ReplacingMergeTree com a chave de ordenação como chave de deduplicação torna
--- a reprocessamento da mesma mensagem idempotente (mesmo papel do UNIQUE KEY do MariaDB).
+-- o reprocessamento da mesma mensagem idempotente.
 CREATE TABLE IF NOT EXISTS argos.events
 (
     tenant_id      LowCardinality(String),
@@ -13,10 +13,9 @@ CREATE TABLE IF NOT EXISTS argos.events
     bucket_at      DateTime('UTC'),
     collected_at   DateTime64(3, 'UTC'),
     ingested_at    DateTime64(3, 'UTC'),
-    site_id        String,
-    site_name      String,
-    entity_name    String,
+    name           String,
     status         LowCardinality(String),
+    dimensions     Map(LowCardinality(String), String),
     batch_id       String,
     payload        String CODEC(ZSTD(3))
 )
@@ -36,10 +35,9 @@ CREATE TABLE IF NOT EXISTS argos.entity_latest
     entity_id      String,
     collected_at   DateTime64(3, 'UTC'),
     ingested_at    DateTime64(3, 'UTC'),
-    site_id        String,
-    site_name      String,
-    entity_name    String,
+    name           String,
     status         LowCardinality(String),
+    dimensions     Map(LowCardinality(String), String),
     batch_id       String,
     payload        String CODEC(ZSTD(3))
 )

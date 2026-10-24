@@ -1,6 +1,4 @@
 requests==2.32.4
-python-dotenv==1.1.1
-mysql-connector-python==9.4.0
 prometheus-client==0.22.1
 opentelemetry-api==1.39.1
 opentelemetry-sdk==1.39.1
@@ -13,3 +11,4 @@ fastapi==0.115.6
 uvicorn[standard]==0.34.0
 jsonschema==4.23.0
 clickhouse-connect==0.8.15
+redis==5.2.1
