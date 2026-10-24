@@ -58,7 +58,7 @@ services:
     volumes:
       - ./collectors/aruba/schemas:/schemas/aruba:ro
     ports:
-      - "8000:8000"
+      - "${INGEST_PORT:-8000}:8000"
     command: ["uvicorn", "app.ingest.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
   query:
@@ -89,7 +89,7 @@ services:
       - ./collectors/aruba/schemas:/schemas/aruba:ro
       - exports_data:/exports
     ports:
-      - "8001:8001"
+      - "${QUERY_PORT:-8001}:8001"
     command: ["uvicorn", "app.query.main:app", "--host", "0.0.0.0", "--port", "8001"]
 
   web:
@@ -99,7 +99,7 @@ services:
     depends_on:
       - query
     ports:
-      - "8080:80"
+      - "${WEB_PORT:-8090}:80"
 
   collector-aruba:
     build: ./collectors/aruba

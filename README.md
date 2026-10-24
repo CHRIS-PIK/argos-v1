@@ -44,7 +44,7 @@ docker compose exec ingest python -m app.ingest.keys create --name aruba --tenan
 docker compose up -d --force-recreate collector-aruba
 ```
 
-Crie uma chave de leitura para entrar na interface (http://localhost:8080):
+Crie uma chave de leitura para entrar na interface (http://localhost:8090):
 
 ```bash
 docker compose exec ingest python -m app.ingest.keys create --name ana --tenant default --role reader
