@@ -9,3 +9,6 @@ opentelemetry-instrumentation-requests==0.60b1
 opentelemetry-instrumentation-urllib3==0.60b1
 opentelemetry-instrumentation-threading==0.60b1
 pyroscope-io==0.8.11
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+jsonschema==4.23.0

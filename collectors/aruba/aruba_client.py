@@ -7,9 +7,9 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from app.auth import TokenManager
-from app.config import settings
-from app.observability.metrics import (
+from auth import TokenManager
+from config import settings
+from metrics import (
     ARUBA_REQUEST_DURATION,
     ARUBA_REQUEST_ERRORS,
     ARUBA_REQUESTS,
@@ -82,7 +82,7 @@ class ArubaClient:
             response = self.get(url, headers, params)
             if response.status_code == 401:
                 # Força nova autenticação e repete a chamada uma vez.
-                from app.auth import TOKEN_FILE
+                from auth import TOKEN_FILE
 
                 TOKEN_FILE.unlink(missing_ok=True)
                 headers["Authorization"] = f"Bearer {self.tokens.get_access_token()}"

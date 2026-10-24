@@ -20,8 +20,9 @@ echo "[2/7] Validando docker-compose..."
 docker compose config --quiet
 
 echo "[3/7] Buildando imagens..."
-COMPOSE_PARALLEL_LIMIT=1 docker compose build --pull producer
+COMPOSE_PARALLEL_LIMIT=1 docker compose build --pull ingest
 COMPOSE_PARALLEL_LIMIT=1 docker compose build worker
+COMPOSE_PARALLEL_LIMIT=1 docker compose build collector-aruba
 
 echo
 echo "[4/7] Subindo MariaDB..."
@@ -39,8 +40,8 @@ echo
 echo "MariaDB pronto."
 
 echo
-echo "[5/7] Subindo Producer e Worker..."
-docker compose up -d producer worker
+echo "[5/7] Subindo Ingest API, Worker e Coletor Aruba..."
+docker compose up -d ingest worker collector-aruba
 
 echo
 echo "[6/7] Status da stack"
@@ -52,8 +53,8 @@ echo "[7/7] Validando endpoints de métricas..."
 sleep 5
 
 echo
-echo "Producer:"
-curl -fs http://localhost:9101/metrics >/dev/null \
+echo "Ingest API:"
+curl -fs http://localhost:8000/healthz >/dev/null \
     && echo "OK" \
     || echo "Falhou"
 
@@ -73,4 +74,4 @@ docker compose ps
 
 echo
 echo "Logs em tempo real:"
-echo "docker compose logs -f producer worker"
+echo "docker compose logs -f ingest worker collector-aruba"

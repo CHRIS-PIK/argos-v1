@@ -22,30 +22,44 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def enqueue_page(
-    collector_name: str,
-    endpoint: str,
+def enqueue_event(
+    tenant_id: str,
+    source: str,
+    event_type: str,
+    schema_version: str,
+    batch_id: str | None,
     page_number: int,
     collected_at: datetime,
     bucket_at: datetime,
     items: list[dict[str, Any]],
 ) -> bool:
+    """Persiste um lote validado. Retorna False quando o lote já havia sido enfileirado.
+
+    collector_name guarda o event_type e endpoint guarda a source, para que o worker
+    e os processors continuem recebendo o mesmo formato de mensagem.
+    """
     payload_text = json.dumps(items, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     payload_sha = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()
-    dedup_source = f"{collector_name}|{endpoint}|{bucket_at.isoformat()}|{page_number}|{payload_sha}"
+    if batch_id:
+        dedup_source = f"{tenant_id}|{source}|{event_type}|{batch_id}|{page_number}"
+    else:
+        dedup_source = (
+            f"{tenant_id}|{source}|{event_type}|{bucket_at.isoformat()}|"
+            f"{page_number}|{payload_sha}"
+        )
     dedup_key = hashlib.sha256(dedup_source.encode("utf-8")).hexdigest()
 
     sql = """
     INSERT IGNORE INTO ingestion_queue
-    (collector_name, endpoint, page_number, collected_at, bucket_at, payload,
-     payload_sha256, dedup_key, status, available_at)
-    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s)
+    (tenant_id, collector_name, schema_version, batch_id, endpoint, page_number,
+     collected_at, bucket_at, payload, payload_sha256, dedup_key, status, available_at)
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s)
     """
     with connection() as cnx:
         cur = cnx.cursor()
         cur.execute(sql, (
-            collector_name, endpoint, page_number, collected_at, bucket_at,
-            payload_text, payload_sha, dedup_key, collected_at
+            tenant_id, event_type, schema_version, batch_id, source, page_number,
+            collected_at, bucket_at, payload_text, payload_sha, dedup_key, utc_now(),
         ))
         return cur.rowcount == 1
 

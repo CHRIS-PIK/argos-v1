@@ -5,10 +5,10 @@ import time
 from pathlib import Path
 import fcntl
 import requests
-from app.config import settings
+from config import settings
 
-TOKEN_FILE = Path("/data/token.json")
-LOCK_FILE = Path("/data/token.lock")
+TOKEN_FILE = Path(settings.token_dir) / "token.json"
+LOCK_FILE = Path(settings.token_dir) / "token.lock"
 
 
 class TokenManager:
