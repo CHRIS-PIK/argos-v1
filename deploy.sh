@@ -68,7 +68,7 @@ curl -fs http://localhost:8001/healthz >/dev/null \
     || echo "Falhou"
 
 echo "Web:"
-curl -fs http://localhost:8080/ >/dev/null \
+curl -fs "http://localhost:${WEB_PORT:-8090}/" >/dev/null \
     && echo "OK" \
     || echo "Falhou"
 

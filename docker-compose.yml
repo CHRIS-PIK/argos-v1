@@ -57,8 +57,9 @@ services:
         condition: service_healthy
     volumes:
       - ./collectors/aruba/schemas:/schemas/aruba:ro
+      - ./collectors/public-demo/schemas:/schemas/public-demo:ro
     ports:
-      - "8000:8000"
+      - "${INGEST_PORT:-8000}:8000"
     command: ["uvicorn", "app.ingest.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
   query:
@@ -87,9 +88,10 @@ services:
         condition: service_healthy
     volumes:
       - ./collectors/aruba/schemas:/schemas/aruba:ro
+      - ./collectors/public-demo/schemas:/schemas/public-demo:ro
       - exports_data:/exports
     ports:
-      - "8001:8001"
+      - "${QUERY_PORT:-8001}:8001"
     command: ["uvicorn", "app.query.main:app", "--host", "0.0.0.0", "--port", "8001"]
 
   web:
@@ -99,7 +101,21 @@ services:
     depends_on:
       - query
     ports:
-      - "8080:80"
+      - "${WEB_PORT:-8090}:80"
+
+  collector-demo:
+    # Coletor de demonstração (USGS e Open-Meteo). Suba com: docker compose --profile demo up -d collector-demo
+    profiles: ["demo"]
+    build: ./collectors/public-demo
+    container_name: argos-collector-demo
+    restart: unless-stopped
+    env_file:
+      - path: ./collectors/public-demo/.env
+        required: false
+    depends_on:
+      - ingest
+    ports:
+      - "${DEMO_PORT:-9103}:9103"
 
   collector-aruba:
     build: ./collectors/aruba
@@ -144,6 +160,7 @@ services:
         condition: service_healthy
     volumes:
       - ./collectors/aruba/schemas:/schemas/aruba:ro
+      - ./collectors/public-demo/schemas:/schemas/public-demo:ro
     ports:
       - "9102:9102"
     command: ["python", "-m", "app.worker"]

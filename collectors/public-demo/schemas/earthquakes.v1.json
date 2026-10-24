@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Terremoto (USGS GeoJSON feature) v1",
+  "type": "object",
+  "required": ["id", "properties", "geometry"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "properties": {
+      "type": "object",
+      "required": ["place", "time"],
+      "properties": {
+        "mag": { "type": ["number", "null"] },
+        "place": { "type": ["string", "null"] },
+        "time": { "type": "integer" },
+        "status": { "type": "string" }
+      }
+    },
+    "geometry": { "type": "object" }
+  },
+  "x-argos": {
+    "entity_id": ["id"],
+    "name": ["properties.place"],
+    "status": ["properties.status"],
+    "dimensions": {
+      "type": "properties.type",
+      "network": "properties.net",
+      "magnitude": "properties.mag",
+      "alert": "properties.alert",
+      "tsunami": "properties.tsunami"
+    }
+  }
+}

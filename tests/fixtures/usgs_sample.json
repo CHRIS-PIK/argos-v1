@@ -1,0 +1,141 @@
+{
+ "type": "FeatureCollection",
+ "metadata": {
+  "generated": 1792885715000,
+  "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson",
+  "title": "USGS All Earthquakes, Past Hour",
+  "status": 200,
+  "api": "2.8.2",
+  "count": 6
+ },
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": 2.04,
+    "place": "8 km NNE of Brooktrails, CA",
+    "time": 1792885164020,
+    "updated": 1792885647507,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/nc75454441",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/nc75454441.geojson",
+    "felt": null,
+    "cdi": null,
+    "mmi": null,
+    "alert": null,
+    "status": "automatic",
+    "tsunami": 0,
+    "sig": 64,
+    "net": "nc",
+    "code": "75454441",
+    "ids": ",nc75454441,",
+    "sources": ",nc,",
+    "types": ",nearby-cities,origin,phase-data,scitech-link,",
+    "nst": 17,
+    "dmin": 0.03897,
+    "rms": 0.08,
+    "gap": 91,
+    "magType": "md",
+    "type": "earthquake",
+    "title": "M 2.0 - 8 km NNE of Brooktrails, CA"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -123.336502075195,
+     39.507999420166,
+     0.980000019073486
+    ]
+   },
+   "id": "nc75454441"
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": 2.28,
+    "place": "2 km W of Round Valley, CA",
+    "time": 1792884263790,
+    "updated": 1792885646507,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/nc75454431",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/nc75454431.geojson",
+    "felt": null,
+    "cdi": null,
+    "mmi": null,
+    "alert": null,
+    "status": "automatic",
+    "tsunami": 0,
+    "sig": 80,
+    "net": "nc",
+    "code": "75454431",
+    "ids": ",nc75454431,nn00926205,",
+    "sources": ",nc,nn,",
+    "types": ",focal-mechanism,nearby-cities,origin,phase-data,scitech-link,",
+    "nst": 21,
+    "dmin": 0.1488,
+    "rms": 0.06,
+    "gap": 111,
+    "magType": "md",
+    "type": "earthquake",
+    "title": "M 2.3 - 2 km W of Round Valley, CA"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -118.61499786377,
+     37.4136657714844,
+     11.6700000762939
+    ]
+   },
+   "id": "nc75454431"
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": 0.8,
+    "place": "8 km ENE of Coso Junction, CA",
+    "time": 1792883731490,
+    "updated": 1792883934161,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/ci41351967",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/ci41351967.geojson",
+    "felt": null,
+    "cdi": null,
+    "mmi": null,
+    "alert": null,
+    "status": "automatic",
+    "tsunami": 0,
+    "sig": 10,
+    "net": "ci",
+    "code": "41351967",
+    "ids": ",ci41351967,",
+    "sources": ",ci,",
+    "types": ",nearby-cities,origin,phase-data,",
+    "nst": 15,
+    "dmin": 0.04581,
+    "rms": 0.11,
+    "gap": 78,
+    "magType": "ml",
+    "type": "earthquake",
+    "title": "M 0.8 - 8 km ENE of Coso Junction, CA"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -117.871333333333,
+     36.0736666666667,
+     3.84
+    ]
+   },
+   "id": "ci41351967"
+  }
+ ],
+ "bbox": [
+  -123.33650207519,
+  17.820166666667,
+  0.98000001907349,
+  -66.945,
+  39.507999420166,
+  12.24
+ ]
+}

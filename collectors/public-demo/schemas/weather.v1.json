@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Clima atual por cidade (Open-Meteo) v1",
+  "type": "object",
+  "required": ["id", "name", "temperature_c"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string" },
+    "temperature_c": { "type": ["number", "null"] },
+    "humidity_pct": { "type": ["number", "null"] },
+    "wind_kmh": { "type": ["number", "null"] },
+    "condition": { "type": "string" }
+  },
+  "x-argos": {
+    "entity_id": ["id"],
+    "name": ["name"],
+    "status": ["condition"],
+    "dimensions": {
+      "region": "region",
+      "state": "state",
+      "country": "country"
+    }
+  }
+}

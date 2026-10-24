@@ -1,7 +1,7 @@
 # Query API e interface web
 
 ```text
-navegador ──> web (nginx :8080) ── /api ──> Query API (:8001) ──> ClickHouse
+navegador ──> web (nginx :8090) ── /api ──> Query API (:8001) ──> ClickHouse
                                                   └─ exportações ──> Redis (estado) + volume /exports (arquivos)
 ```
 
