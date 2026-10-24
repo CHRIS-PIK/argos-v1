@@ -166,6 +166,34 @@ def should_give_up(attempts: int) -> bool:
     return attempts >= int(os.getenv("QUEUE_MAX_ATTEMPTS", "5"))
 
 
+def queue_stats() -> dict[str, Any]:
+    """Estado da fila para a Query API (papel admin)."""
+    client = get_redis()
+    lag = 0
+    pending = 0
+    for group in client.xinfo_groups(STREAM):
+        if group["name"] == GROUP:
+            lag = int(group.get("lag") or 0)
+            pending = int(group.get("pending") or 0)
+    oldest_age = 0.0
+    oldest = client.xrange(STREAM, count=1)
+    if oldest:
+        created_ms = int(oldest[0][0].split("-")[0])
+        oldest_age = max(0.0, datetime.now(timezone.utc).timestamp() - created_ms / 1000)
+    dead = [
+        {"id": message_id, "event_type": f.get("event_type"), "source": f.get("source"),
+         "tenant_id": f.get("tenant_id"), "attempts": f.get("attempts"), "error": f.get("error", "")[:500]}
+        for message_id, f in client.xrevrange(DEAD_STREAM, count=20)
+    ]
+    return {
+        "waiting": lag,
+        "processing": pending,
+        "dead": int(client.xlen(DEAD_STREAM)),
+        "oldest_age_seconds": round(oldest_age, 1),
+        "recent_dead": dead,
+    }
+
+
 def update_queue_metrics() -> None:
     client = get_redis()
     lag = 0

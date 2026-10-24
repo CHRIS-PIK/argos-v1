@@ -61,6 +61,46 @@ services:
       - "8000:8000"
     command: ["uvicorn", "app.ingest.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
+  query:
+    build:
+      context: .
+      args:
+        REQUIREMENTS: requirements-query.txt
+    container_name: argos-query
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SCHEMAS_DIR: /schemas
+      EXPORT_DIR: /exports
+      APP_ENVIRONMENT: ${APP_ENVIRONMENT:-homelab}
+      HOST_NAME: ${HOST_NAME:-olympus}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4317}
+      PYROSCOPE_SERVER_ADDRESS: ${PYROSCOPE_SERVER_ADDRESS:-http://host.docker.internal:4040}
+      PYROSCOPE_SAMPLE_RATE: ${PYROSCOPE_SAMPLE_RATE:-100}
+      PYROSCOPE_MEMORY_ENABLED: ${PYROSCOPE_MEMORY_ENABLED:-true}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    volumes:
+      - ./collectors/aruba/schemas:/schemas/aruba:ro
+      - exports_data:/exports
+    ports:
+      - "8001:8001"
+    command: ["uvicorn", "app.query.main:app", "--host", "0.0.0.0", "--port", "8001"]
+
+  web:
+    build: ./web
+    container_name: argos-web
+    restart: unless-stopped
+    depends_on:
+      - query
+    ports:
+      - "8080:80"
+
   collector-aruba:
     build: ./collectors/aruba
     container_name: argos-collector-aruba
@@ -109,6 +149,7 @@ services:
     command: ["python", "-m", "app.worker"]
 
 volumes:
+  exports_data:
   clickhouse_data:
   redis_data:
   token_data:
