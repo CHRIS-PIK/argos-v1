@@ -1,0 +1,1249 @@
+{
+  "uid": "argos-overview",
+  "title": "Argos: visão geral",
+  "tags": [
+    "argos"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "ds",
+        "label": "Métricas",
+        "type": "datasource",
+        "query": "prometheus",
+        "regex": "/mimir/i",
+        "current": {},
+        "hide": 0,
+        "refresh": 1
+      },
+      {
+        "name": "loki",
+        "label": "Logs",
+        "type": "datasource",
+        "query": "loki",
+        "current": {},
+        "hide": 0,
+        "refresh": 1
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Visão geral",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Fila (aguardando + processando)",
+      "description": "Mensagens ainda não confirmadas. Deve voltar a zero entre os ciclos dos coletores.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum(datalake_queue_backlog)",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 500
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Dead-letter",
+      "description": "Mensagens que esgotaram as tentativas. Veja o erro em Fontes e fila (interface web).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum(datalake_queue_messages{status=\"DEAD\"})",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Mais antiga na fila",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "max(datalake_queue_oldest_pending_age_seconds)",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 120
+              },
+              {
+                "color": "red",
+                "value": 600
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Itens processados (1 h)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum(increase(datalake_items_processed_total[1h]))",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Registros gravados (1 h)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum(increase(datalake_records_written_total[1h]))",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Falhas do worker (1 h)",
+      "description": "Tentativas que falharam (serão retentadas) ou foram para a dead-letter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum(increase(datalake_messages_total{status=~\"failed|dead\"}[1h]))",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Pipeline: fila e worker",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Itens processados por tipo (por minuto)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum by (collector) (rate(datalake_items_processed_total[5m])) * 60",
+          "legendFormat": "{{collector}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Mensagens por resultado (por minuto)",
+      "description": "processed = concluída; failed = falhou e será retentada; dead = foi para a dead-letter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum by (status) (rate(datalake_messages_total[5m])) * 60",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Fila por estado",
+      "description": "PENDING = aguardando; PROCESSING = entregue ao worker e não confirmada; DEAD = dead-letter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum by (status) (datalake_queue_messages)",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Tempo de processamento de uma mensagem (p50 e p95)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(datalake_processing_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(datalake_processing_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "Coletores",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 14,
+      "type": "table",
+      "title": "Tempo desde o último sucesso por tipo",
+      "description": "Laranja acima de 30 min e vermelho acima de 1 h. Os ciclos rodam a cada 10 min.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "time() - argos_collector_last_success_timestamp_seconds",
+          "legendFormat": "{{event_type}}",
+          "refId": "A",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "job": true,
+              "instance": true,
+              "service": true,
+              "component": true
+            },
+            "renameByName": {
+              "Value": "Valor"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "align": "auto"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1800
+              },
+              {
+                "color": "red",
+                "value": 3600
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Valor"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Lotes enviados à plataforma (por resultado, por 10 min)",
+      "description": "accepted = novo; duplicate = já existia (idempotência); rejected = a plataforma recusou (422/403).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 23,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum by (event_type, result) (increase(argos_collector_batches_sent_total[10m]))",
+          "legendFormat": "{{event_type}} · {{result}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Duração da coleta por tipo (p95)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, event_type) (rate(argos_collector_collection_duration_seconds_bucket[30m])))",
+          "legendFormat": "{{event_type}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Ciclos do coletor (por hora)",
+      "description": "Um ciclo com status failed significa que ao menos um endpoint falhou.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 31,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum by (status) (increase(argos_collector_cycles_total[1h]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Requisições à API da Aruba (por minuto)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum by (status) (rate(aruba_requests_total[5m])) * 60",
+          "legendFormat": "HTTP {{status}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Latência da API da Aruba (p95)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 39,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(aruba_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 23,
+      "type": "row",
+      "title": "Ingest API (requer o alvo :8000 no Alloy; veja docs/observability.md)",
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 47,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "id": 20,
+          "type": "timeseries",
+          "title": "Requisições por resultado (por minuto)",
+          "description": "invalid / unknown_schema / forbidden / too_large indicam coletor fora do contrato.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 48,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${ds}"
+              },
+              "expr": "sum by (event_type, result) (rate(argos_ingest_requests_total[5m])) * 60",
+              "legendFormat": "{{event_type}} · {{result}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 8,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 21,
+          "type": "timeseries",
+          "title": "Itens aceitos por tipo (por minuto)",
+          "description": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 48,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${ds}"
+              },
+              "expr": "sum by (event_type) (rate(argos_ingest_items_total[5m])) * 60",
+              "legendFormat": "{{event_type}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 12,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 22,
+          "type": "timeseries",
+          "title": "Latência da Ingest API (p95)",
+          "description": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 56,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${ds}"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(argos_ingest_request_duration_seconds_bucket[5m])))",
+              "legendFormat": "p95",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "lineWidth": 1,
+                "fillOpacity": 8,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "type": "row",
+      "title": "Logs",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 24,
+      "type": "logs",
+      "title": "Erros nos logs do Argos",
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "{application=\"argos\"} |~ \"ERROR|Traceback|failed\"",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      }
+    }
+  ]
+}
