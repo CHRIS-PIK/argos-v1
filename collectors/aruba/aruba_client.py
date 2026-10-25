@@ -122,13 +122,16 @@ class ArubaClient:
                     continue
 
             # Fallback apenas para APIs que realmente expõem offset/total sem cursor `next`.
+            # Se a paginação já usou cursor, a última página (sem `next`) encerra o percurso:
+            # o offset volta a 0 e `total` é maior que a página, o que geraria um pedido
+            # extra inválido (400) depois de todos os dados já terem sido coletados.
             total = (
                 int(container.get("total", container.get("count", len(items))) or 0)
                 if isinstance(container, dict)
                 else len(items)
             )
             offset = int(params.get("offset", 0))
-            if items and offset + len(items) < total:
+            if not seen_cursors and items and offset + len(items) < total:
                 params.pop("next", None)
                 params["offset"] = offset + len(items)
             else:

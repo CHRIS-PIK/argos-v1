@@ -75,10 +75,8 @@ def configure_observability(service_name: str) -> None:
             application_name=f"argos.{service_name}",
             server_address=pyroscope_endpoint,
             sample_rate=max(1, int(os.getenv("PYROSCOPE_SAMPLE_RATE", "100"))),
-            cpu_enabled=True,
             oncpu=True,
             gil_only=True,
-            mem_enabled=_env_bool("PYROSCOPE_MEMORY_ENABLED", True),
             enable_logging=True,
             tags={
                 "service": service_name,
