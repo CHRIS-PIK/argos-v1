@@ -157,6 +157,31 @@ time() - argos_collector_last_success_timestamp_seconds > 1800
 datalake_queue_messages{status="DEAD"}
 ```
 
+## Dashboard do Argos
+
+`grafana/dashboards/argos-overview.json` traz o dashboard **Argos: visão geral** (uid `argos-overview`), com painéis de:
+
+- **Visão geral:** fila, dead-letter, mensagem mais antiga, itens processados, registros gravados e falhas do worker.
+- **Pipeline:** itens por tipo, mensagens por resultado, fila por estado e tempo de processamento (p50 e p95).
+- **Coletores:** tempo desde o último sucesso por tipo, lotes enviados por resultado, duração da coleta, ciclos e requisições à API da Aruba.
+- **Ingest API** (linha recolhida): requisições por resultado, itens aceitos e latência. Só tem dados depois que o alvo `:8000` é adicionado ao Alloy.
+- **Logs:** erros dos containers com `application="argos"` (depende da regex de rótulos do Alloy descrita acima).
+
+As fontes de dados são variáveis do dashboard (`Métricas`, que escolhe a primeira com “mimir” no nome, e `Logs`), então ele não depende do UID de nenhum datasource. As consultas foram testadas no Mimir do homelab: todas executam sem erro.
+
+### Importar
+
+1. Crie no Grafana uma **service account** com papel *Editor* e gere um token (*Administration › Users and access › Service accounts*).
+2. Rode, no seu terminal:
+
+```bash
+GRAFANA_URL=http://192.168.0.121:3000 GRAFANA_TOKEN=<token> ./scripts/grafana-import.sh
+```
+
+3. **Revogue o token** depois de importar. O script lê o token só da variável de ambiente e não o imprime. `GRAFANA_FOLDER_UID` escolhe a pasta de destino e `--dry-run` só valida o payload.
+
+Sem script: em *Dashboards › New › Import*, cole o conteúdo do JSON. Rodar o script de novo atualiza o mesmo dashboard (`overwrite`).
+
 ## Profiling
 
 O Pyroscope só inicializa com `pyroscope-io 0.8.11` a partir da correção de 24/10/2026 (argumentos `cpu_enabled`/`mem_enabled` removidos). A biblioteca não tem perfil de memória, então `PYROSCOPE_MEMORY_ENABLED` não tem mais efeito.
